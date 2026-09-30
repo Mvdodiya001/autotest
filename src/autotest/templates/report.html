@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>autotest report — {{ apk_name }}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#07090d;--s1:#0c1018;--border:#1c2a38;--accent:#00d4a0;--blue:#3b82f6;
+--red:#ef4444;--yellow:#f59e0b;--text:#b8ccd8;--text2:#7a9ab0;--text3:#3d5566;--white:#e8f0f8}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:15px}
+.wrap{max-width:1000px;margin:0 auto;padding:2rem 1.5rem}
+h1{color:var(--white);font-size:1.4rem}h2{color:var(--text3);font-size:.75rem;text-transform:uppercase;letter-spacing:.8px;margin:2rem 0 .8rem}
+.sub{color:var(--text2);font-size:.85rem;margin-top:.3rem}.sub code{color:var(--text3);font-size:.78rem}
+.score{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin:1.5rem 0}
+.cell{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem}
+.cell .n{font-size:1.6rem;font-weight:700;color:var(--white)}
+.cell .l{font-size:.72rem;color:var(--text2);text-transform:uppercase;letter-spacing:.6px}
+.card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1.1rem 1.3rem;margin-bottom:.7rem}
+.card.verified{border-color:rgba(0,212,160,.4)}
+.card.refuted{opacity:.75}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.verified .pill{background:rgba(0,212,160,.12);color:var(--accent)}
+.refuted .pill{background:rgba(239,68,68,.1);color:var(--red)}
+.inconclusive .pill{background:rgba(245,158,11,.12);color:var(--yellow)}
+.unverified .pill{background:rgba(59,130,246,.12);color:var(--blue)}
+.ftype{color:var(--white);font-weight:700;margin:.4rem 0 .2rem}
+.prev{font-family:monospace;font-size:.82rem;color:var(--text2);word-break:break-all}
+.ev{font-size:.85rem;margin-top:.5rem}
+pre{background:#04060a;border:1px solid var(--border);border-radius:8px;padding:.7rem 1rem;font-size:.78rem;overflow-x:auto;margin-top:.6rem;color:var(--text)}
+.meta{font-size:.75rem;color:var(--text3);margin-top:.5rem}
+details{margin-bottom:.7rem}summary{cursor:pointer;color:var(--text2);font-size:.85rem}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--border)}
+th{color:var(--text3);text-transform:uppercase;font-size:.68rem;letter-spacing:.6px}
+td.code{font-family:monospace}
+footer{color:var(--text3);font-size:.75rem;margin-top:2.5rem}
+</style>
+</head>
+<body><div class="wrap">
+<h1>autotest report</h1>
+<p class="sub">{{ apk_name }}<br><code>sha256 {{ apk_sha256 }}{% if mobsf_hash %}<br>mobsf {{ mobsf_hash }}{% endif %}<br>{{ started_at }}</code></p>
+
+<h2>Scoreboard</h2>
+<div class="score">
+{% for v in ["verified","refuted","inconclusive","unverified"] %}
+<div class="cell"><div class="n">{{ counts[v] }}</div><div class="l">{{ v }}</div></div>
+{% endfor %}
+</div>
+
+<h2>Verified findings</h2>
+{% if verified %}
+{% for f in verified %}
+<div class="card verified"><span class="pill">verified</span>
+<div class="ftype">{{ f.candidate.secret_type }}</div>
+<div class="prev">{{ f.candidate.value_preview }}</div>
+<div class="ev">{{ f.verification.verifier }} — {{ f.verification.evidence }}</div>
+{% if f.replay %}<pre>{{ f.replay }}</pre>{% endif %}
+<div class="meta">{{ f.candidate.provenance.source }}{% if f.candidate.provenance.file %} · {{ f.candidate.provenance.file }}{% endif %}</div>
+</div>
+{% endfor %}
+{% else %}<p class="sub">None. Nothing was proven exploitable.</p>{% endif %}
+
+<h2>Inconclusive</h2>
+{% for f in inconclusive %}
+<div class="card inconclusive"><span class="pill">inconclusive</span>
+<div class="ftype">{{ f.candidate.secret_type }}</div>
+<div class="prev">{{ f.candidate.value_preview }}</div>
+<div class="ev">{{ f.verification.verifier }} — {{ f.verification.evidence }}</div></div>
+{% else %}<p class="sub">None.</p>{% endfor %}
+
+<h2>Refuted &amp; unverified</h2>
+<details><summary>Refuted ({{ refuted|length }}) — proven dead / locked down</summary>
+{% for f in refuted %}
+<div class="card refuted"><span class="pill">refuted</span>
+<div class="ftype">{{ f.candidate.secret_type }}</div>
+<div class="prev">{{ f.candidate.value_preview }}</div>
+<div class="ev">{{ f.verification.evidence }}</div></div>
+{% endfor %}</details>
+<details><summary>Unverified ({{ unverified|length }}) — no verifier / not yet run</summary>
+{% for f in unverified %}
+<div class="card unverified"><span class="pill">unverified</span>
+<div class="ftype">{{ f.candidate.secret_type }}</div>
+<div class="prev">{{ f.candidate.value_preview }}</div></div>
+{% endfor %}</details>
+
+<h2>Appendix — all candidates</h2>
+<table><tr><th>id</th><th>type</th><th>preview</th><th>provenance</th></tr>
+{% for c in candidates %}
+<tr><td class="code">{{ c.id }}</td><td>{{ c.secret_type }}</td><td class="code">{{ c.value_preview }}</td><td class="code">{{ c.provenance.source }}</td></tr>
+{% endfor %}</table>
+<footer>autotest {{ version }} · verifiers are read-only · full secrets never persisted, previews only</footer>
+</div></body></html>

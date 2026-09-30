@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Test / lint caches and rendered reports (template in src/ stays tracked)
+/.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+/findings.html
+/out/
+
+# Local scan artifacts (may contain live secrets)
+out/
+*-report.json
+findings.json
+
+# Vendored MobSF checkout (2GB+, local reference only; see docs/development-cycle.md)
+Mobile-Security-Framework-MobSF/
+
+# Local env overrides
+.env

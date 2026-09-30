@@ -1,0 +1,48 @@
+[project]
+name = "autotest"
+version = "0.1.0"
+description = "Automated mobile-app pentest verification pipeline: MobSF finds candidate secrets, autotest proves them live"
+readme = "README.md"
+authors = [
+    { name = "Mvdodiya001", email = "m.v.dodiya001@gmail.com" }
+]
+license = { text = "MIT" }
+keywords = ["android", "pentest", "mobsf", "secret-scanning", "dynamic-analysis", "frida"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "requests>=2.31",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+autotest = "autotest.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Mvdodiya001/autotest"
+Repository = "https://github.com/Mvdodiya001/autotest"
+Issues = "https://github.com/Mvdodiya001/autotest/issues"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.8", "responses>=0.25"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
