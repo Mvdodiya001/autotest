@@ -36,10 +36,11 @@ def test_runner_degrades_without_frida(monkeypatch):
 
 def test_runner_timeout_returns_partial(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/frida")
-    monkeypatch.setattr(frida_run.env_mod, "_SERIAL", "")
     hit_line = 'AUTOTEST_HOOK {"hook":"api.use","api":"x.y"}\n'
+    seen: dict[str, list[str]] = {}
 
     def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
         raise subprocess.TimeoutExpired(cmd, 1, output=hit_line, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -48,8 +49,9 @@ def test_runner_timeout_returns_partial(monkeypatch):
             frida_run, "check_ready", return_value=None
         ),
     ):
-        hits = frida_run.run_script("com.x", "crypto_hooks.js", dwell=1)
+        hits = frida_run.run_script("com.x", "crypto_hooks.js", dwell=1, serial="emulator-5554")
     assert len(hits) == 1 and hits[0].detail == {"api": "x.y"}
+    assert seen["cmd"][1:3] == ["-D", "emulator-5554"]
 
 
 def _dyn(hooks=(), apimon=""):

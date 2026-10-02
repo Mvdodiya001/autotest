@@ -12,13 +12,8 @@ import subprocess
 from . import env as env_mod
 
 
-def am_start(component: str) -> tuple[bool, str]:
+def am_start(component: str, serial: str = "") -> tuple[bool, str]:
     """Try launching COMPONENT (pkg/.Activity). Returns (launched, one-line evidence)."""
-    import os
-
-    adb_env = dict(os.environ)
-    if env_mod.selected_serial():
-        adb_env["ANDROID_SERIAL"] = env_mod.selected_serial()
     try:
         proc = subprocess.run(
             ["adb", "shell", "am", "start", "-n", component],
@@ -26,7 +21,7 @@ def am_start(component: str) -> tuple[bool, str]:
             text=True,
             timeout=60,
             check=False,
-            env=adb_env,
+            env=env_mod.adb_environ(serial),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return False, f"probe error: {type(e).__name__}"
@@ -38,24 +33,24 @@ def am_start(component: str) -> tuple[bool, str]:
     return False, out[:200] or "no output"
 
 
-def probe_exported(components: list[str]) -> list[dict[str, object]]:
+def probe_exported(components: list[str], serial: str = "") -> list[dict[str, object]]:
     return [
         {"component": c, "launched": ok, "evidence": ev}
         for c in components
-        for ok, ev in [am_start(c)]
+        for ok, ev in [am_start(c, serial=serial)]
     ]
 
 
-def jdwp_packages() -> list[str]:
+def jdwp_packages(serial: str = "") -> list[str]:
     """Packages with a JDWP (debuggable) process. Empty list = none / adb down."""
     try:
-        pids = env_mod._adb("jdwp", timeout=30).split()
+        pids = env_mod._adb("jdwp", serial=serial, timeout=30).split()
     except env_mod.DynamicEnvError:
         return []
     if not pids:
         return []
     try:
-        ps = env_mod._adb("shell ps -A -o PID,NAME", timeout=30)
+        ps = env_mod._adb("shell ps -A -o PID,NAME", serial=serial, timeout=30)
     except env_mod.DynamicEnvError:
         return []
     pid_to_name = {}

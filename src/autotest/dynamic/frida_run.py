@@ -26,30 +26,29 @@ class HookHit:
     detail: dict = field(default_factory=dict)
 
 
-def check_ready(package: str) -> None:
+def check_ready(package: str, serial: str = "") -> None:
     if not shutil.which("frida"):
         raise FridaUnavailable("frida CLI not installed (pip install frida-tools)")
     try:
-        ps = env_mod._adb("shell ps -A", timeout=30)
+        ps = env_mod._adb("shell ps -A", serial=serial, timeout=30)
     except env_mod.DynamicEnvError as e:
         raise FridaUnavailable(f"adb unavailable: {e}") from e
     if "frida-server" not in ps:
         raise FridaUnavailable("frida-server not running on device")
     try:
-        pids = env_mod._adb("shell pidof " + package, timeout=30).strip()
+        pids = env_mod._adb("shell pidof " + package, serial=serial, timeout=30).strip()
     except env_mod.DynamicEnvError:
         pids = ""
     if not pids:
         raise FridaUnavailable(f"target {package} not running")
 
 
-def run_script(package: str, script: str, dwell: int = 60) -> list[HookHit]:
+def run_script(package: str, script: str, dwell: int = 60, serial: str = "") -> list[HookHit]:
     """Attach to PACKAGE, stream SCRIPT output for DWELL seconds, return hits."""
-    check_ready(package)
+    check_ready(package, serial=serial)
     path = SCRIPTS_DIR / script
     if not path.is_file():
         raise FridaUnavailable(f"hook script missing: {path.name}")
-    serial = env_mod.selected_serial()
     cmd = ["frida", "-U", "-n", package, "-l", str(path)]
     if serial:
         cmd[1:1] = ["-D", serial]

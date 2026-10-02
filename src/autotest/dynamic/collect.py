@@ -11,10 +11,10 @@ from typing import Any
 from . import env as env_mod
 
 
-def pull_logcat(package: str, max_lines: int = 4000) -> list[str]:
+def pull_logcat(package: str, max_lines: int = 4000, serial: str = "") -> list[str]:
     """Last logcat lines mentioning the package (or its log TAGs)."""
     try:
-        out = env_mod._adb("logcat", "-d", "-v", "brief", timeout=60)
+        out = env_mod._adb("logcat", "-d", "-v", "brief", serial=serial, timeout=60)
     except env_mod.DynamicEnvError:
         return []
     lines = out.splitlines()[-max_lines:]

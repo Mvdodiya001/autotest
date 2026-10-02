@@ -1,4 +1,4 @@
-"""CLI (M0): scan | verify-only | report-only."""
+"""CLI: scan, verify-only, report-only, and dyn-verify."""
 
 from __future__ import annotations
 
@@ -20,6 +20,12 @@ from .pipeline import run_report_only, run_scan, run_verify_only
     "--scan-timeout", type=int, default=None, help="MobSF static-analysis budget, seconds"
 )
 @click.option("--workdir", type=click.Path(), default=None, help="Scan workdir root")
+@click.option(
+    "--lab-dir",
+    type=click.Path(),
+    default=None,
+    help="mobsf-lab directory with start-emulator.sh (or AUTOTEST_LAB_DIR)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -28,6 +34,7 @@ def main(
     timeout: int | None,
     scan_timeout: int | None,
     workdir: str | None,
+    lab_dir: str | None,
 ) -> None:
     overrides = {}
     if mobsf_url:
@@ -40,6 +47,8 @@ def main(
         overrides["mobsf_scan_timeout"] = scan_timeout
     if workdir:
         overrides["workdir"] = Path(workdir)
+    if lab_dir:
+        overrides["lab_dir"] = Path(lab_dir)
     ctx.obj = load_settings(overrides)
 
 
@@ -48,7 +57,7 @@ def main(
 @click.option("--out-dir", type=click.Path(), default=None)
 @click.pass_obj
 def scan(settings, apk: str, out_dir: str | None) -> None:
-    """Run the full pipeline on APK (M0: ingest + empty findings.json)."""
+    """Scan an APK and write redacted findings.json (static analysis + extraction)."""
     result = run_scan(apk, settings, out_dir)
     click.echo(
         f"scan ok: {result.apk_sha256[:16]}… -> {(out_dir or settings.workdir / Path(apk).stem)}/findings.json"
@@ -59,7 +68,7 @@ def scan(settings, apk: str, out_dir: str | None) -> None:
 @click.argument("findings", type=click.Path(exists=True, dir_okay=False))
 @click.pass_obj
 def verify_only(settings, findings: str) -> None:
-    """Re-run verifiers over FINDINGS.json (M0: no-op round-trip)."""
+    """Re-run read-only verifiers over FINDINGS.json (values from mobsf_report.json)."""
     result = run_verify_only(findings, settings)
     click.echo(f"verify ok: {len(result.verifications)} verifications")
 
@@ -68,7 +77,7 @@ def verify_only(settings, findings: str) -> None:
 @click.argument("findings", type=click.Path(exists=True, dir_okay=False))
 @click.pass_obj
 def report_only(settings, findings: str) -> None:
-    """Render HTML report from FINDINGS.json (M0: placeholder)."""
+    """Render the HTML dashboard from FINDINGS.json."""
     out = run_report_only(findings, settings)
     click.echo(f"report ok: {out}")
 
@@ -78,7 +87,7 @@ def report_only(settings, findings: str) -> None:
 @click.option("--main-activity", default="", help="Launcher activity (pkg/.Activity suffix ok)")
 @click.pass_obj
 def dyn_verify(settings, findings: str, main_activity: str) -> None:
-    """Run the dynamic pass over FINDINGS.json and merge verdicts (M4.3)."""
+    """Run the on-device dynamic pass over FINDINGS.json and merge verdicts."""
     import json
 
     from .dynamic import merge as merge_mod
@@ -99,7 +108,7 @@ def dyn_verify(settings, findings: str, main_activity: str) -> None:
         settings.mobsf_scan_timeout,
     )
     session = DynamicSession(client=client, apk=result.apk_path)
-    _, verdicts = dyn_run.run_dynamic(session, static, main_activity)
+    _, verdicts = dyn_run.run_dynamic(session, static, main_activity, lab_dir=settings.lab_dir)
     merge_mod.merge_dynamic(result, verdicts)
     result.save(findings)
     n_dyn = sum(1 for v in result.verifications if v.verifier.startswith("dynamic:"))

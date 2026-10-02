@@ -27,6 +27,18 @@ APK → emulator → MobSF session → probes/hooks → Analyzers → merge ─�
 * **Safety by design:** verifiers, analyzers and Frida hooks are read-only;
   `findings.json` stores redacted previews only — full values are re-extracted
   from the local `mobsf_report.json` at verify time and never persisted.
+* **AWS pairing:** an `AKIA…` access key id becomes `AwsAccessKey` when a
+  40-character secret access key shares its MobSF secrets bucket (one file, or
+  the file-less secrets list) or one code-analysis finding. The secret stays in
+  memory as `paired_secret`; `verify-only` copies it to `ctx.values["<id>:secret"]`
+  for a read-only STS `GetCallerIdentity`. Pairing is appearance order inside
+  that bucket, so a decoy 40-character mixed-case token before the real secret
+  can be zipped to the key (STS then refutes); hex digests are ignored.
+* **Emulator serial:** `ensure_emulator` returns it on `EmulatorInfo` (no
+  process-global serial). The session keeps it; install, logcat, probes, and
+  launch set `ANDROID_SERIAL` from it. `frida_run.run_script` does the same and
+  selects the device with `-D` when given that serial. `adb devices` stays
+  unpinned.
 * **Design:** SOLID throughout — `Scanner`/`Extractor`/`Verifier`/`Analyzer`
   abstractions with registries; see [`docs/development-cycle.md`](docs/development-cycle.md)
   for architecture, build history (M0→M4.3) and the extending cookbook.
@@ -35,7 +47,8 @@ APK → emulator → MobSF session → probes/hooks → Analyzers → merge ─�
 
 Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/), and a running
 [MobSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF) instance
-(pre-built `mobsf` Docker image works; the emulator in `~/mobsf-lab` for dynamic runs).
+(pre-built `mobsf` Docker image works; dynamic runs use `~/mobsf-lab`,
+overridable with `AUTOTEST_LAB_DIR` or `--lab-dir`).
 
 ```bash
 uv sync --group dev
@@ -45,7 +58,7 @@ uv run autotest scan app.apk --out-dir ./out
 ```
 
 Flags mirror every setting (`--mobsf-url`, `--mobsf-api-key`, `--timeout`,
-`--scan-timeout`, `--workdir`). Without an API key the tool runs in offline
+`--scan-timeout`, `--workdir`, `--lab-dir`). Without an API key the tool runs in offline
 mode (ingest + unit tests; live checks skip).
 
 ## Testing

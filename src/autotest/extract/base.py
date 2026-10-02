@@ -7,7 +7,8 @@ from typing import Any
 
 from .mobsf_extract import extract_candidates
 
-ExtractorResult = dict[str, Any]  # {secret_type, value, preview, provenance}
+# {secret_type, value, preview, provenance, optional paired_secret}
+ExtractorResult = dict[str, Any]
 
 
 class Extractor(ABC):

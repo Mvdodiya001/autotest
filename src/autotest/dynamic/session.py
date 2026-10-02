@@ -17,10 +17,12 @@ class DynamicSession:
     file_hash: str = ""
     package: str = ""
     report: dict[str, Any] = field(default_factory=dict)
+    serial: str = ""
 
-    def setup(self) -> DynamicSession:
-        env_mod.ensure_emulator()
-        env_mod.install_apk(self.apk)
+    def setup(self, lab_dir: str | Path | None = None) -> DynamicSession:
+        info = env_mod.ensure_emulator(lab_dir)
+        self.serial = info.serial
+        env_mod.install_apk(self.apk, serial=self.serial)
         up = self.client.upload(self.apk)
         self.file_hash = up["hash"]
         self.client.dynamic_start(self.file_hash)

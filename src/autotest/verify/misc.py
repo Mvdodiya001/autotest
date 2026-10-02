@@ -63,8 +63,9 @@ def verify_jwt(candidate, ctx: Ctx) -> Verification:
 def verify_aws_key(candidate, ctx: Ctx) -> Verification:
     """sts:GetCallerIdentity is read-only and proves the key is live.
 
-    Expects the paired secret in ctx.values under '<id>:secret' (emitted by a
-    future AWS-pair extractor); without it -> INCONCLUSIVE.
+    The paired secret is ctx.values['<id>:secret'], filled by verify-only from
+    the extractor's in-memory paired_secret (never written to findings.json).
+    Without it -> INCONCLUSIVE.
     """
     import datetime
     import urllib.parse

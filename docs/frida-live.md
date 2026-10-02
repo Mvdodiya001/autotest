@@ -13,7 +13,12 @@ frida --version
 ## 2. frida-server on the emulator
 
 ```bash
-source ~/mobsf-lab/env.sh
+# Lab checkout defaults to ~/mobsf-lab (AUTOTEST_LAB_DIR or --lab-dir). Not vendored.
+source "${AUTOTEST_LAB_DIR:-$HOME/mobsf-lab}/env.sh"
+# adb devices stays unpinned. autotest then uses the emulator-* serial from
+# ensure_emulator (EmulatorInfo, kept on DynamicSession) and sets ANDROID_SERIAL
+# on later adb calls. Pin the same serial here when more than one device is listed:
+export ANDROID_SERIAL=emulator-5554
 # match the server build to the device arch (x86_64 emulator here) and to your
 # frida-tools major version, e.g. frida-server-16.x-android-x86_64(.xz)
 adb push frida-server /data/local/tmp/
@@ -35,9 +40,17 @@ ls src/autotest/dynamic/frida/   # crypto_hooks.js, api_map.js (node --check in 
 
 ```python
 from autotest.dynamic import frida_run
-hits = frida_run.run_script("com.ctf.fam", "crypto_hooks.js", dwell=60)
+# serial is the one ensure_emulator returned. There is no process-global serial.
+# With it set, adb checks use ANDROID_SERIAL and frida is invoked as -D <serial>.
+hits = frida_run.run_script(
+    "com.ctf.fam", "crypto_hooks.js", dwell=60, serial="emulator-5554"
+)
 # -> [HookHit(hook='cipher.init', detail={...}), ...]
 ```
+
+`dyn-verify` threads `Settings.lab_dir` into `ensure_emulator` and passes that
+serial into install, launch, logcat, and probes. Hook collection stays this
+explicit `run_script` call.
 
 Dwell expiry surfaces as partial output (TimeoutExpired is parsed, not raised).
 Feed hits into the analyzers:

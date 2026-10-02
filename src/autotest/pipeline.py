@@ -1,4 +1,4 @@
-"""Pipeline orchestration skeleton (M0). Stages 2-4 land in M1/M2/M3."""
+"""Pipeline: scan (ingest, static analysis, extract), verify-only, and report-only."""
 
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ def run_scan(
     result.mobsf_hash = file_hash
     wd.mobsf_report_path.write_text(json.dumps(report, indent=2))
     for cid, cand in run_extractors(report):
-        value = cand.pop("value")
-        _ = value  # full secret stays out of findings.json; preview only
+        # Full secrets (including an AWS paired_secret) stay out of findings.json.
+        _ = cand.pop("value", None), cand.pop("paired_secret", None)
         result.candidates.append(
             Candidate(
                 id=cid,
@@ -61,10 +61,12 @@ def run_scan(
 
 
 def run_verify_only(findings: str | Path, settings: Settings) -> ScanResult:
-    """Re-run stage 4 (verifiers) over an existing findings.json.
+    """Re-run verifiers over an existing findings.json.
 
     Full secret values are re-extracted from the sibling mobsf_report.json
     (findings.json stores redacted previews only) and matched by candidate id.
+    An AwsAccessKey paired secret is loaded into ``<id>:secret`` for the
+    read-only STS check and is not written back.
     """
     from .verify import Ctx, run_all
 
@@ -76,6 +78,9 @@ def run_verify_only(findings: str | Path, settings: Settings) -> ScanResult:
         report = json.loads(report_path.read_text())
         for cid, cand in run_extractors(report):
             values[cid] = cand["value"]
+            paired = cand.get("paired_secret") or ""
+            if paired:
+                values[f"{cid}:secret"] = paired
     by_type: dict[str, list[str]] = {}
     for c in result.candidates:
         by_type.setdefault(c.secret_type, []).append(c.id)
@@ -89,7 +94,7 @@ def run_verify_only(findings: str | Path, settings: Settings) -> ScanResult:
 
 
 def run_report_only(findings: str | Path, settings: Settings) -> Path:
-    """Render the HTML dashboard from findings.json (M3)."""
+    """Render the HTML dashboard from findings.json."""
     from .report import render
 
     result = ScanResult.load(findings)

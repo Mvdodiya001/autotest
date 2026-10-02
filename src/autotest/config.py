@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Static analysis of a fresh APK can take minutes -> separate budget.
     mobsf_scan_timeout: int = Field(default=600, ge=30, le=3600)
     workdir: Path = Field(default=Path("/tmp/opencode/autotest"))
+    # External mobsf-lab checkout (start-emulator.sh). Not vendored in this repo.
+    lab_dir: Path = Field(default_factory=lambda: Path.home() / "mobsf-lab")
 
     # Scanner backend: "api" (docker REST), "local" (vendored tree, later), "none" (ingest only).
     scanner_backend: str = Field(default="api")

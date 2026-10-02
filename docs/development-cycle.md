@@ -16,7 +16,7 @@ principles behind the design. Start here before changing anything.
 | Tests | `pytest` (+ `responses` for mocked HTTP) | unit + live-gated golden tests |
 | Lint/format | `ruff` | `check` + `format`, line-length 100, py312 |
 | Static engine | MobSF (Docker `mobsf` container, REST-first) | proven analyzer; vendored tree kept for a future local backend |
-| Dynamic lab | Android emulator (API 30, `-writable-system`) + `adb` + Frida | `~/mobsf-lab/*.sh` owns boot; autotest only drives it |
+| Dynamic lab | Android emulator (API 30, `-writable-system`) + `adb` + Frida | `~/mobsf-lab` owns boot (`AUTOTEST_LAB_DIR` or `--lab-dir`); not vendored; autotest only drives it |
 
 ## 2. Architecture
 
@@ -39,7 +39,7 @@ Module map (`src/autotest/`):
 
 | Module | Responsibility | SOLID role |
 |---|---|---|
-| `config.py` | `Settings` (env/flags, timeouts) | — |
+| `config.py` | `Settings` (env/flags, timeouts, `lab_dir`) | — |
 | `models.py` | `ScanResult/Candidate/Verification/Verdict` | shared kernel |
 | `workdir.py` | per-scan layout (`findings.json`, `mobsf_report.json`) | — |
 | `mobsf/transport.py` | auth POST + timeout budgets | S: transport only |
@@ -51,11 +51,11 @@ Module map (`src/autotest/`):
 | `verify/` | `Verifier` ABC + `FunctionVerifier` adapter + type registry | O/L: functions serve as Verifiers |
 | `verify/firebase.py` | anon-auth key proof, RTDB open-read probe | — |
 | `verify/misc.py` | JWT inspection, AWS STS, URL reachability | — |
-| `dynamic/env.py` | emulator bring-up, pinned `ANDROID_SERIAL`, install | — |
-| `dynamic/session.py` | setup → collect → teardown | — |
+| `dynamic/env.py` | emulator bring-up; serial on `EmulatorInfo` (no process-global); `ANDROID_SERIAL` on later adb; install | — |
+| `dynamic/session.py` | setup → collect → teardown; keeps the emulator serial | — |
 | `dynamic/probe.py` | `am start` exported launch, JDWP map | — |
 | `dynamic/collect.py` | adb logcat pull + MobSF report merge | — |
-| `dynamic/frida_run.py` | hook runner, degrades to `FridaUnavailable` | — |
+| `dynamic/frida_run.py` | hook runner (`-D` and `ANDROID_SERIAL` when given a serial), degrades to `FridaUnavailable` | — |
 | `dynamic/frida/*.js` | read-only `crypto_hooks.js`, `api_map.js` (`AUTOTEST_HOOK` JSONL) | — |
 | `dynamic/core.py` | logcat-leak, exported-launch, cleartext, debuggable | — |
 | `dynamic/core2.py` | crypto-hooks (ECB/IV-reuse/setSeed/weak-hash), perm-api-map | — |
@@ -80,7 +80,14 @@ findings. Tests: CLI round-trips on fake APKs.
 `MobSFClient` (upload/scan/report_json) → `extract_candidates()`:
 `FirebaseApiKey` (incl. `key=` inside Firebase URLs), `RtdbUrl`,
 `PrivateHttpUrl`/`GenericUrl` (private-IP split), `HardcodedSecret`,
-`HardcodedRef` (non-library `android_hardcoded` files). Noise filter for
+`HardcodedRef` (non-library `android_hardcoded` files). `AwsAccessKey` is
+emitted when an `AKIA` access key id and a secret access key share one MobSF
+secrets bucket (one file, or the file-less secrets list) or one code-analysis
+finding; the secret stays on the in-memory candidate as `paired_secret` and is
+not written to `findings.json` (the full secret remains in the sibling
+`mobsf_report.json`). Pairing is appearance order inside that one bucket, so a
+decoy 40-character mixed-case token before the real secret can be zipped to the
+access key (STS then refutes); hex digests are ignored. Noise filter for
 `*.credentials.*` localization strings (found live: 38 junk entries).
 Golden test: `fam-ctf.apk` → 7 candidates; DIVA regression test added after a
 **real timeout bug** (fresh-APK static analysis > 20 s) forced a separate
@@ -91,6 +98,8 @@ Golden test: `fam-ctf.apk` → 7 candidates; DIVA regression test added after a
 `verify_firebase_key` (anonymous `signUp` proof + auth'd RTDB probe),
 `verify_rtdb_open` (unauth shallow read), `verify_jwt` (alg/claims inspection),
 `verify_aws_key` (SigV4 `GetCallerIdentity`), `verify_url_reachable`.
+`verify-only` loads an AWS `paired_secret` into `ctx.values["<id>:secret"]` for
+that read-only STS call; without a pair the AWS verdict stays INCONCLUSIVE.
 `verify-only` is idempotent. Mocked suite via `responses`; live proof on
 `fam-ctf.apk`: key VERIFIED, RTDB REFUTED-unauth, `172.16` INCONCLUSIVE.
 
@@ -100,18 +109,22 @@ commands, collapsed refuted/unverified, appendix. Test-locked: full secrets
 never render (previews only).
 
 ### M4.0 — dynamic plumbing
-`dynamic/env.py` (mobsf-lab bring-up, adb/root/writable checks),
-`dynamic/session.py` (install → start/collect/stop), `dynamic/analyzers.py`
-registry. Endpoint contracts verified against the vendored MobSF tree
-(`dynamic/*` need POST `hash`).
+`dynamic/env.py` (mobsf-lab bring-up from `Settings.lab_dir`, adb/root/writable
+checks), `dynamic/session.py` (install → start/collect/stop, serial kept on the
+session), `dynamic/analyzers.py` registry. Endpoint contracts verified against
+the vendored MobSF tree (`dynamic/*` need POST `hash`).
 
 ### M4.1 — core analyzers
 `extract_with_ids()` shared id scheme; `dynamic/probe.py` (`am start` parse,
 JDWP map); `dynamic/collect.py` (adb logcat pull + merge); analyzers:
 logcat-leak (extracted values + secret-shaped tokens incl. 32+-hex),
-exported-launch, cleartext, debuggable. Two live fixes: pinned
-`ANDROID_SERIAL` (MobSF leaves duplicate TCP entries) and hex-token shapes
-(the real request signature is 64-hex). Live: leak + launch VERIFIED.
+exported-launch, cleartext, debuggable. Two live fixes: the emulator serial
+comes back on `EmulatorInfo` and is passed explicitly into install, logcat,
+probes, and launch (`ANDROID_SERIAL`) because MobSF leaves duplicate TCP
+entries — `adb devices` stays unpinned, and there is no process-global serial —
+and hex-token shapes (the real request signature is 64-hex). Frida takes the
+same serial (`ANDROID_SERIAL` and `-D`) on `run_script`. Live: leak + launch
+VERIFIED.
 
 ### M4.2 — Frida hooks
 Read-only `crypto_hooks.js` / `api_map.js` (`node --check` in suite),
@@ -144,6 +157,10 @@ uv run autotest verify-only ./out/findings.json
 uv run autotest dyn-verify ./out/findings.json --main-activity <pkg/.Main>
 uv run autotest report-only ./out/findings.json
 ```
+
+CI (`.github/workflows/ci.yml`) runs lint + the offline `pytest` line on every
+push and pull request (uv, Python 3.12). Live MobSF tests skip without
+`AUTOTEST_MOBSF_API_KEY`.
 
 ## 5. Extending (cookbook)
 

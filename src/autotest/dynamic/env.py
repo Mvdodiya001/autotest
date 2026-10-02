@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -28,41 +29,47 @@ def _run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]
         raise DynamicEnvError(f"timed out: {' '.join(cmd)}") from e
 
 
-_SERIAL: str = ""
+def adb_environ(serial: str = "") -> dict[str, str]:
+    """Process environment, with ANDROID_SERIAL pinned when ``serial`` is set.
+
+    Pinning avoids MobSF's duplicate TCP device entries on later adb calls.
+    """
+    adb_env = dict(os.environ)
+    if serial:
+        adb_env["ANDROID_SERIAL"] = serial
+    return adb_env
 
 
-def selected_serial() -> str:
-    return _SERIAL
-
-
-def _adb(*args: str, timeout: int = 60) -> str:
-    import os
-
+def _adb_proc(*args: str, serial: str = "", timeout: int = 60) -> subprocess.CompletedProcess[str]:
     if not shutil.which("adb"):
         raise DynamicEnvError("adb not on PATH (source ~/mobsf-lab/env.sh?)")
-    adb_env = dict(os.environ)
-    if _SERIAL:
-        adb_env["ANDROID_SERIAL"] = _SERIAL
     try:
-        proc = subprocess.run(
+        return subprocess.run(
             ["adb", *args],
             capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
-            env=adb_env,
+            env=adb_environ(serial),
         )
     except FileNotFoundError as e:
         raise DynamicEnvError("adb not on PATH (source ~/mobsf-lab/env.sh?)") from e
     except subprocess.TimeoutExpired as e:
         raise DynamicEnvError(f"adb timed out: {' '.join(args)}") from e
+
+
+def _adb(*args: str, serial: str = "", timeout: int = 60) -> str:
+    proc = _adb_proc(*args, serial=serial, timeout=timeout)
     if proc.returncode != 0:
         raise DynamicEnvError(f"adb {' '.join(args)} failed: {proc.stderr.strip()[:200]}")
     return proc.stdout
 
 
 def ensure_emulator(lab_dir: str | Path | None = None) -> EmulatorInfo:
-    """Boot the MobSF emulator via start-emulator.sh and verify adb/root state."""
+    """Boot the MobSF emulator via start-emulator.sh and verify adb/root state.
+
+    Returns the emulator serial; callers pass it into later adb calls.
+    """
     script = Path(lab_dir or Path.home() / "mobsf-lab") / "start-emulator.sh"
     if not script.is_file():
         raise DynamicEnvError(f"mobsf-lab script missing: {script}")
@@ -73,17 +80,19 @@ def ensure_emulator(lab_dir: str | Path | None = None) -> EmulatorInfo:
     emu = next((s for s in serials if s.startswith("emulator-")), "")
     if not emu:
         raise DynamicEnvError(f"no emulator serial in adb devices: {serials}")
-    global _SERIAL
-    _SERIAL = emu  # pin all later adb calls (MobSF leaves duplicate TCP entries)
-    _adb("root")
-    _adb("wait-for-device")
-    touch = _run(["adb", "shell", "touch /system/.autotest_probe && rm /system/.autotest_probe"])
+    _adb("root", serial=emu)
+    _adb("wait-for-device", serial=emu)
+    touch = _adb_proc(
+        "shell",
+        "touch /system/.autotest_probe && rm /system/.autotest_probe",
+        serial=emu,
+    )
     return EmulatorInfo(serial=emu, rooted=True, system_writable=touch.returncode == 0)
 
 
-def install_apk(apk: str | Path) -> str:
+def install_apk(apk: str | Path, serial: str = "") -> str:
     """Install (or reinstall) APK on the attached emulator. Returns package name."""
-    out = _adb("install", "-r", str(apk), timeout=180)
+    out = _adb("install", "-r", str(apk), serial=serial, timeout=180)
     if "Success" not in out:
         raise DynamicEnvError(f"adb install failed: {out.strip()[:300]}")
     return out.strip().splitlines()[-1]
