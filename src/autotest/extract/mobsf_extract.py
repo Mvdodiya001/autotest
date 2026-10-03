@@ -11,10 +11,35 @@ GOOGLE_API_KEY = re.compile(r"AIza[0-9A-Za-z_-]{20,}")
 FIREBASE_KEY_IN_TEXT = re.compile(r"key=(AIza[0-9A-Za-z_-]{20,})")
 RTDB_HOST = re.compile(r"[a-z0-9-]+\.firebasedatabase\.app", re.IGNORECASE)
 NOISE_SECRET = re.compile(r"(android|androidx)\.credentials\.|^[A-Z][a-z]+$|^[a-z_]+$")
+SLACK_TOKEN = re.compile(r"\b(xox[baprs]-[0-9A-Za-z-]{10,})\b")
+GITHUB_TOKEN = re.compile(
+    r"\b((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b"
+)
+STRIPE_SECRET = re.compile(r"\b((?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,})\b")
+PEM_BLOCK = re.compile(
+    r"-----BEGIN ((?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?)PRIVATE KEY-----"
+    r"\s*[A-Za-z0-9+/=\s]+?"
+    r"-----END \1PRIVATE KEY-----"
+)
+_STORAGE_BUCKET = re.compile(
+    r"https://firebasestorage\.googleapis\.com/v0/b/([A-Za-z0-9._-]+)", re.IGNORECASE
+)
+_GS_BUCKET = re.compile(r"gs://([A-Za-z0-9._-]+)")
+_FIRESTORE_PROJECT = re.compile(
+    r"https://firestore\.googleapis\.com/v1/projects/([A-Za-z0-9_-]+)", re.IGNORECASE
+)
+_APPSPOT = re.compile(r"\b([a-z0-9-]+\.appspot\.com)\b", re.IGNORECASE)
 # Long-term IAM access key id. Paired below with a secret access key in the same context.
 AWS_ACCESS_KEY_ID = re.compile(r"(?<![A-Z0-9])(AKIA[0-9A-Z]{16})(?![A-Z0-9])")
 # 40-character secret access key (base64 alphabet, no padding). Hex digests are rejected later.
 AWS_SECRET_ACCESS_KEY = re.compile(r"(?<![A-Za-z0-9/+])([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+])")
+
+
+def pem_preview(value: str) -> str:
+    """Header name and length only. The base64 body stays out of previews."""
+    match = re.match(r"-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----", value.strip())
+    kind = match.group(1).strip() if match else "PRIVATE KEY"
+    return f"BEGIN {kind} (len {len(value)})"
 
 
 def redact(secret: str, head: int = 6, tail: int = 2) -> str:
@@ -138,6 +163,7 @@ def extract_candidates(report: dict[str, Any]) -> list[dict[str, Any]]:
         provenance: dict[str, Any],
         *,
         paired_secret: str = "",
+        preview: str = "",
     ) -> None:
         key = (secret_type, value)
         if value and key not in seen:
@@ -147,7 +173,7 @@ def extract_candidates(report: dict[str, Any]) -> list[dict[str, Any]]:
             item: dict[str, Any] = {
                 "secret_type": secret_type,
                 "value": value,
-                "preview": value if show_full else redact(value),
+                "preview": preview or (value if show_full else redact(value)),
                 "provenance": provenance,
             }
             if paired_secret:
@@ -155,34 +181,43 @@ def extract_candidates(report: dict[str, Any]) -> list[dict[str, Any]]:
             out.append(item)
 
     for entry in report.get("urls", []) or []:
+        prov = {"source": "mobsf:urls", "file": entry.get("path", "")}
         for url in entry.get("urls", []) or []:
             host = (urlparse(url).hostname or "").lower()
             if RTDB_HOST.search(host):
-                add("RtdbUrl", url, {"source": "mobsf:urls", "file": entry.get("path", "")})
+                add("RtdbUrl", url, prov)
             elif _is_private(url):
-                add("PrivateHttpUrl", url, {"source": "mobsf:urls", "file": entry.get("path", "")})
-            elif host:
-                add("GenericUrl", url, {"source": "mobsf:urls", "file": entry.get("path", "")})
+                add("PrivateHttpUrl", url, prov)
+            elif host and not _STORAGE_BUCKET.search(url) and not _FIRESTORE_PROJECT.search(url):
+                add("GenericUrl", url, prov)
+            _scan_backends(url, prov, add)
 
+    firebase_keys: set[str] = set()
     for fb in report.get("firebase_urls", []) or []:
         desc = fb.get("description", "")
+        fb_prov = {"source": "mobsf:firebase_urls", "detail": str(fb.get("title", ""))[:80]}
         for key in FIREBASE_KEY_IN_TEXT.findall(desc):
-            add(
-                "FirebaseApiKey",
-                key,
-                {"source": "mobsf:firebase_urls", "detail": fb.get("title", "")[:80]},
-            )
+            firebase_keys.add(key)
+            add("FirebaseApiKey", key, fb_prov)
         for m in RTDB_HOST.findall(desc):
             add("RtdbUrl", "https://" + m, {"source": "mobsf:firebase_urls"})
+        _scan_backends(desc, {"source": "mobsf:firebase_urls"}, add)
 
     for secret in report.get("secrets", []) or []:
         text = secret if isinstance(secret, str) else str(secret)
+        firebase_ctx = "firebase" in text.lower()
         for key in GOOGLE_API_KEY.findall(text):
-            add("FirebaseApiKey", key, {"source": "mobsf:secrets"})
+            if key in firebase_keys or firebase_ctx:
+                firebase_keys.add(key)
+                add("FirebaseApiKey", key, {"source": "mobsf:secrets"})
+            else:
+                add("GoogleApiKey", key, {"source": "mobsf:secrets"})
         if not NOISE_SECRET.search(text) and re.search(
             r"(key|secret|token|passwd|pwd)", text, re.IGNORECASE
         ):
             add("HardcodedSecret", text[:300], {"source": "mobsf:secrets"})
+        _scan_credential_material(text, {"source": "mobsf:secrets"}, add)
+        _scan_backends(text, {"source": "mobsf:secrets"}, add)
 
     findings = (report.get("code_analysis", {}) or {}).get("findings", {})
     hardcoded = (findings.get("android_hardcoded", {}) or {}).get("files", {})
@@ -193,8 +228,50 @@ def extract_candidates(report: dict[str, Any]) -> list[dict[str, Any]]:
     for text, prov in _aws_contexts(report):
         for access_id, secret in _aws_pairs(text):
             add("AwsAccessKey", access_id, prov, paired_secret=secret)
+        if str(prov.get("source", "")).startswith("mobsf:secrets"):
+            continue
+        _scan_credential_material(text, prov, add)
+        _scan_backends(text, prov, add)
 
     return out
+
+
+def _scan_backends(text: str, provenance: dict[str, Any], add) -> None:
+    """Firebase Storage and Firestore URLs. Values are the open-read endpoints."""
+    buckets = [
+        *_STORAGE_BUCKET.findall(text),
+        *_GS_BUCKET.findall(text),
+        *_APPSPOT.findall(text),
+    ]
+    seen_buckets: set[str] = set()
+    for bucket in buckets:
+        if bucket in seen_buckets:
+            continue
+        seen_buckets.add(bucket)
+        add(
+            "FirebaseStorageUrl",
+            f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o",
+            provenance,
+        )
+    for project in dict.fromkeys(_FIRESTORE_PROJECT.findall(text)):
+        add(
+            "FirestoreUrl",
+            f"https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents",
+            provenance,
+        )
+
+
+def _scan_credential_material(text: str, provenance: dict[str, Any], add) -> None:
+    """Slack, GitHub, Stripe, and PEM material. Full values stay in memory only."""
+    for token in SLACK_TOKEN.findall(text):
+        add("SlackToken", token, provenance)
+    for token in GITHUB_TOKEN.findall(text):
+        add("GitHubToken", token, provenance)
+    for token in STRIPE_SECRET.findall(text):
+        add("StripeSecretKey", token, provenance)
+    for match in PEM_BLOCK.finditer(text):
+        block = match.group(0).strip()
+        add("PemPrivateKey", block, provenance, preview=pem_preview(block))
 
 
 def extract_with_ids(report: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:

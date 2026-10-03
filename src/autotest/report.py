@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import __version__
-from .models import ScanResult
+from .models import ScanResult, candidate_stable_id, severity_for
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -37,6 +38,42 @@ class ReportRenderer:
         self.hints[key] = fn
 
     def _register_builtin_hints(self) -> None:
+        self.register_hint(
+            "GoogleApiKey",
+            lambda _p: (
+                "# read-only acceptance check:\n"
+                "curl -s 'https://maps.googleapis.com/maps/api/geocode/json"
+                "?address=test&key=<KEY>'"
+            ),
+        )
+        self.register_hint(
+            "FirebaseStorageUrl",
+            lambda p: f"# unauthenticated list:\ncurl -s '{p}?maxResults=1'",
+        )
+        self.register_hint(
+            "FirestoreUrl",
+            lambda p: f"# unauthenticated list:\ncurl -s '{p}?pageSize=1'",
+        )
+        self.register_hint(
+            "SlackToken",
+            lambda _p: "curl -s https://slack.com/api/auth.test -H 'Authorization: Bearer <TOKEN>'",
+        )
+        self.register_hint(
+            "GitHubToken",
+            lambda _p: "curl -s https://api.github.com/user -H 'Authorization: Bearer <TOKEN>'",
+        )
+        self.register_hint(
+            "StripeSecretKey",
+            lambda _p: "curl -s https://api.stripe.com/v1/account -H 'Authorization: Bearer <KEY>'",
+        )
+        self.register_hint(
+            "PemPrivateKey",
+            lambda _p: "# structural check only; do not use this key to sign or authenticate",
+        )
+        self.register_hint(
+            "HardcodedSecret",
+            lambda _p: "# no live acceptor for an unrecognized hardcoded string",
+        )
         self.register_hint(
             "FirebaseApiKey",
             lambda _p: (
@@ -103,12 +140,18 @@ class ReportRenderer:
                     else "",
                 }
             )
+        counts = {k: len(v) for k, v in groups.items()}
         return self.template.render(
             apk_name=Path(result.apk_path).name,
             apk_sha256=result.apk_sha256,
             mobsf_hash=result.mobsf_hash,
             started_at=result.started_at.isoformat(),
-            counts={k: len(v) for k, v in groups.items()},
+            counts=counts,
+            severity={
+                "high": counts["verified"],
+                "medium": counts["inconclusive"],
+                "info": counts["refuted"] + counts["unverified"],
+            },
             candidates=result.candidates,
             version=__version__,
             **groups,
@@ -125,3 +168,57 @@ def replay_hint(secret_type: str, preview: str) -> str:
 
 def render(result: ScanResult) -> str:
     return _default_renderer.render(result)
+
+
+_SARIF_LEVEL = {"high": "error", "medium": "warning", "info": "note"}
+
+
+def render_sarif(result: ScanResult) -> str:
+    """SARIF 2.1.0. Uses the stable id and severity. Previews only."""
+    verdict_of = {v.candidate_id: v for v in result.verifications}
+    results = []
+    for cand in result.candidates:
+        verification = verdict_of.get(cand.id)
+        verdict = verification.verdict.value if verification else "unverified"
+        severity = severity_for(verdict)
+        evidence = verification.evidence if verification else ""
+        stable_id = candidate_stable_id(cand)
+        results.append(
+            {
+                "ruleId": cand.secret_type,
+                "level": _SARIF_LEVEL[severity],
+                "message": {"text": f"{verdict}: {cand.value_preview}"},
+                "partialFingerprints": {"stableId": stable_id},
+                "properties": {
+                    "stableId": stable_id,
+                    "severity": severity,
+                    "verdict": verdict,
+                    "evidence": evidence,
+                },
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": cand.provenance.file or Path(result.apk_path).name
+                            }
+                        }
+                    }
+                ],
+            }
+        )
+    document = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "autotest",
+                        "version": __version__,
+                    }
+                },
+                "results": results,
+            }
+        ],
+    }
+    return json.dumps(document, indent=2, ensure_ascii=False)

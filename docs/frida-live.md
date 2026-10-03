@@ -38,27 +38,34 @@ ls src/autotest/dynamic/frida/   # crypto_hooks.js, api_map.js (node --check in 
 
 ## 4. Run through autotest
 
+`dyn-verify` (and `run`, unless `--skip-dynamic`) collects hooks after the
+read-only exercise pass. Both scripts run on the emulator serial from
+`ensure_emulator`, for the same `--dwell` as the UI pass (default 60s):
+
+```bash
+uv run autotest dyn-verify ./out/findings.json --main-activity com.ctf.fam/.MainActivity
+uv run autotest dyn-verify ./out/findings.json --skip-frida   # logcat and probes only
+```
+
+`--skip-frida` skips hook collection only. Logcat, exported, cleartext, and
+debuggable still run. If `frida` or `frida-server` is missing, those two hook
+checks are INCONCLUSIVE (`dyn:crypto:unavailable`, `dyn:permapi:unavailable`)
+and the other dynamic checks are unchanged.
+
+The same runner is available directly. The serial is the one `ensure_emulator`
+returned. There is no process-global serial. With it set, adb checks use
+`ANDROID_SERIAL` and frida is invoked as `-D <serial>`.
+
 ```python
 from autotest.dynamic import frida_run
-# serial is the one ensure_emulator returned. There is no process-global serial.
-# With it set, adb checks use ANDROID_SERIAL and frida is invoked as -D <serial>.
 hits = frida_run.run_script(
     "com.ctf.fam", "crypto_hooks.js", dwell=60, serial="emulator-5554"
 )
 # -> [HookHit(hook='cipher.init', detail={...}), ...]
 ```
 
-`dyn-verify` threads `Settings.lab_dir` into `ensure_emulator` and passes that
-serial into install, launch, logcat, and probes. Hook collection stays this
-explicit `run_script` call.
-
 Dwell expiry surfaces as partial output (TimeoutExpired is parsed, not raised).
-Feed hits into the analyzers:
-
-```python
-dyn = {"apimon": "", "autotest": {"hooks": [h.__dict__ for h in hits]}}
-verdicts = analyzers.run_all(static_report, dyn)
-```
+`run_dynamic` stores hits on `autotest.hooks` and feeds them to the analyzers.
 
 ## 5. Interpreting results
 

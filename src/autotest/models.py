@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -14,6 +15,22 @@ class Verdict(str, Enum):
     VERIFIED = "verified"  # live check proved it is real & reachable
     REFUTED = "refuted"  # live check proved it is dead / locked down
     INCONCLUSIVE = "inconclusive"  # live check errored (timeout, network, ...)
+
+
+def severity_for(verdict: Verdict | str) -> str:
+    """verified=high, inconclusive=medium, refuted and unverified=info."""
+    value = verdict.value if isinstance(verdict, Verdict) else str(verdict)
+    if value == Verdict.VERIFIED.value:
+        return "high"
+    if value == Verdict.INCONCLUSIVE.value:
+        return "medium"
+    return "info"
+
+
+def stable_finding_id(secret_type: str, preview: str, provenance_file: str) -> str:
+    """Stable across a rescan: type + redacted preview + provenance file."""
+    blob = f"{secret_type}\0{preview}\0{provenance_file}".encode()
+    return hashlib.sha256(blob).hexdigest()[:20]
 
 
 class Provenance(BaseModel):
@@ -30,6 +47,16 @@ class Candidate(BaseModel):
     secret_type: str  # e.g. FirebaseApiKey, RtdbUrl, AwsAccessKey, Jwt, GenericUrl
     value_preview: str = Field(description="Redacted preview, never the full secret")
     provenance: Provenance
+    # Empty on older findings.json files; derived from type + preview + file.
+    stable_id: str = ""
+
+
+def candidate_stable_id(candidate: Candidate) -> str:
+    if candidate.stable_id:
+        return candidate.stable_id
+    return stable_finding_id(
+        candidate.secret_type, candidate.value_preview, candidate.provenance.file
+    )
 
 
 class Verification(BaseModel):

@@ -127,24 +127,36 @@ def test_run_dynamic_threads_lab_dir_and_serial():
             self.stopped = True
 
     sess = Sess()
+    interaction = {
+        "exported": {"activities": [], "receivers": []},
+        "deeplinks": [],
+        "ui": {"taps": 0, "dwell_s": 60, "stopped": "dwell"},
+    }
     with (
         patch.object(dyn_run, "pull_logcat", return_value=[]) as logcat,
-        patch.object(
-            dyn_run, "collect_probes", return_value={"exported": [], "jdwp": []}
-        ) as probes,
+        patch.object(dyn_run.probe, "jdwp_packages", return_value=[]) as jdwp,
         patch.object(dyn_run, "launch_main", return_value=True) as launch,
+        patch.object(dyn_run.exercise, "exercise_app", return_value=interaction) as exercise,
+        patch.object(dyn_run.frida_run, "run_script", return_value=[]),
     ):
-        dyn_run.run_dynamic(
+        report, _verdicts = dyn_run.run_dynamic(
             sess,
             {"package_name": "com.x", "exported_activities": []},
             "com.x/.Main",
             lab_dir="/tmp/lab",
+            dwell=15,
         )
     assert sess.lab_dir == "/tmp/lab"
     assert sess.stopped is True
     launch.assert_called_once_with("com.x", "com.x/.Main", serial="emulator-5554")
     logcat.assert_called_once_with("com.x", serial="emulator-5554")
-    probes.assert_called_once_with("com.x", [], serial="emulator-5554")
+    exercise.assert_called_once()
+    assert exercise.call_args.kwargs["serial"] == "emulator-5554"
+    assert exercise.call_args.kwargs["dwell"] == 15
+    jdwp.assert_called_once_with(serial="emulator-5554")
+    assert report["exported"] == interaction["exported"]
+    assert report["deeplinks"] == []
+    assert report["ui"]["taps"] == 0
 
 
 def test_analyzer_registry_empty_by_default():

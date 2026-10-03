@@ -46,6 +46,9 @@ footer{color:var(--text3);font-size:.75rem;margin-top:2.5rem}
 {% for v in ["verified","refuted","inconclusive","unverified"] %}
 <div class="cell"><div class="n">{{ counts[v] }}</div><div class="l">{{ v }}</div></div>
 {% endfor %}
+{% for s in ["high","medium","info"] %}
+<div class="cell"><div class="n">{{ severity[s] }}</div><div class="l">{{ s }}</div></div>
+{% endfor %}
 </div>
 
 <h2>Verified findings</h2>

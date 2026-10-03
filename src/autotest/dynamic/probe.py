@@ -12,6 +12,18 @@ import subprocess
 from . import env as env_mod
 
 
+def parse_am_result(out: str) -> tuple[bool, str]:
+    """Classify ``am start`` / ``am broadcast`` output. True means the component ran."""
+    flat = out.strip().replace("\n", " ")
+    if re.search(
+        r"Error|Exception|not found|does not exist|Permission Denial", flat, re.IGNORECASE
+    ):
+        return False, flat[:200]
+    if re.search(r"Starting|Status: ok|Broadcast completed", flat, re.IGNORECASE):
+        return True, flat[:200]
+    return False, flat[:200] or "no output"
+
+
 def am_start(component: str, serial: str = "") -> tuple[bool, str]:
     """Try launching COMPONENT (pkg/.Activity). Returns (launched, one-line evidence)."""
     try:
@@ -25,12 +37,7 @@ def am_start(component: str, serial: str = "") -> tuple[bool, str]:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return False, f"probe error: {type(e).__name__}"
-    out = (proc.stdout + proc.stderr).strip().replace("\n", " ")
-    if re.search(r"Error|Exception|not found|does not exist|Permission Denial", out, re.IGNORECASE):
-        return False, out[:200]
-    if re.search(r"Starting|Status: ok", out, re.IGNORECASE):
-        return True, out[:200]
-    return False, out[:200] or "no output"
+    return parse_am_result((proc.stdout or "") + (proc.stderr or ""))
 
 
 def probe_exported(components: list[str], serial: str = "") -> list[dict[str, object]]:

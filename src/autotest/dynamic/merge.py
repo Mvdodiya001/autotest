@@ -7,19 +7,22 @@ the preview is the (already truncated, secret-free) evidence text.
 
 from __future__ import annotations
 
-from ..models import Candidate, Provenance, ScanResult, Verification
+from ..models import Candidate, Provenance, ScanResult, Verification, stable_finding_id
 
 
 def merge_dynamic(result: ScanResult, dyn_verdicts: list[Verification]) -> ScanResult:
     known = {c.id for c in result.candidates}
     for v in dyn_verdicts:
         if v.candidate_id not in known:
+            secret_type = f"Dynamic:{v.verifier}"
+            preview = v.evidence[:160]
             result.candidates.append(
                 Candidate(
                     id=v.candidate_id,
-                    secret_type=f"Dynamic:{v.verifier}",
-                    value_preview=v.evidence[:160],
+                    secret_type=secret_type,
+                    value_preview=preview,
                     provenance=Provenance(source=v.verifier, detail="dynamic analysis"),
+                    stable_id=stable_finding_id(secret_type, preview, ""),
                 )
             )
             known.add(v.candidate_id)

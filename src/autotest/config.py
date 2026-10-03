@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     workdir: Path = Field(default=Path("/tmp/opencode/autotest"))
     # External mobsf-lab checkout (start-emulator.sh). Not vendored in this repo.
     lab_dir: Path = Field(default_factory=lambda: Path.home() / "mobsf-lab")
+    # Bound for the read-only UI pass and Frida hook collection. 0 skips taps.
+    dynamic_dwell: int = Field(default=60, ge=0, le=3600)
 
     # Scanner backend: "api" (docker REST), "local" (vendored tree, later), "none" (ingest only).
     scanner_backend: str = Field(default="api")

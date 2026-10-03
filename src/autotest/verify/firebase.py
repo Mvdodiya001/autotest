@@ -95,3 +95,51 @@ def verify_rtdb_open(candidate, ctx: Ctx) -> Verification:
         verdict=Verdict.REFUTED,
         evidence=f"unauth read denied (HTTP {r.status_code})",
     )
+
+
+def _open_read(candidate, ctx: Ctx, name: str, params: dict[str, str]) -> Verification:
+    """Unauthenticated GET. 200 → verified, 401/403 or permission denied → refuted."""
+    url = ctx.values.get(candidate.id, "")
+    try:
+        response = requests.get(url, params=params, timeout=ctx.settings.request_timeout)
+    except requests.RequestException as exc:
+        return Verification(
+            candidate_id=candidate.id,
+            verifier=name,
+            verdict=Verdict.INCONCLUSIVE,
+            evidence=f"request error: {type(exc).__name__}",
+        )
+    snippet = response.text[:240]
+    denied = response.status_code in (401, 403) or "PERMISSION_DENIED" in snippet
+    if response.status_code == 200 and not denied:
+        return Verification(
+            candidate_id=candidate.id,
+            verifier=name,
+            verdict=Verdict.VERIFIED,
+            evidence=f"unauthenticated read OK: {url}",
+        )
+    if denied:
+        return Verification(
+            candidate_id=candidate.id,
+            verifier=name,
+            verdict=Verdict.REFUTED,
+            evidence=f"read denied (HTTP {response.status_code})",
+        )
+    return Verification(
+        candidate_id=candidate.id,
+        verifier=name,
+        verdict=Verdict.INCONCLUSIVE,
+        evidence=f"HTTP {response.status_code}",
+    )
+
+
+@verifier("FirebaseStorageUrl")
+def verify_storage_open(candidate, ctx: Ctx) -> Verification:
+    """List objects is a read. maxResults keeps the response small."""
+    return _open_read(candidate, ctx, "verify_storage_open", {"maxResults": "1"})
+
+
+@verifier("FirestoreUrl")
+def verify_firestore_open(candidate, ctx: Ctx) -> Verification:
+    """List documents is a read. pageSize keeps the response small."""
+    return _open_read(candidate, ctx, "verify_firestore_open", {"pageSize": "1"})

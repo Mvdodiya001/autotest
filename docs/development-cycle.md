@@ -9,7 +9,7 @@ principles behind the design. Start here before changing anything.
 |---|---|---|
 | Language | Python ≥ 3.12 | lab standard, MobSF is Python |
 | Packaging | `uv` + `uv_build` | fast, lockfile (`uv.lock`), dev groups |
-| CLI | `click` | groups + subcommands (`scan`, `verify-only`, `report-only`, `dyn-verify`) |
+| CLI | `click` | groups + subcommands (`scan`, `verify-only`, `report-only`, `dyn-verify`, `run`, `diff`) |
 | Config / models | `pydantic` + `pydantic-settings` | validated settings (`AUTOTEST_*` env or flags), `findings.json` schema |
 | HTTP | `requests` | MobSF REST, Firebase/AWS/Google probes |
 | Report | `jinja2` | single-file HTML dashboard, no external assets |
@@ -60,10 +60,11 @@ Module map (`src/autotest/`):
 | `dynamic/core.py` | logcat-leak, exported-launch, cleartext, debuggable | — |
 | `dynamic/core2.py` | crypto-hooks (ECB/IV-reuse/setSeed/weak-hash), perm-api-map | — |
 | `dynamic/merge.py` | orphan `dyn:*` verdicts → synthesized `Dynamic:*` candidates | — |
-| `dynamic/run.py` | `run_dynamic()` orchestration | — |
-| `report.py` | `ReportRenderer` (template + hint registry) | O: new hint types register |
-| `pipeline.py` | `run_scan/scan→extract`, `run_verify_only`, `run_report_only` | thin wiring over ABCs |
-| `cli.py` | `scan`, `verify-only`, `report-only`, `dyn-verify` | — |
+| `dynamic/exercise.py` | read-only activity, broadcast, deep-link, and UI pass | — |
+| `dynamic/run.py` | `run_dynamic()` orchestration, including Frida hook collection | — |
+| `report.py` | `ReportRenderer` (template + hint registry) and SARIF 2.1.0 | O: new hint types register |
+| `pipeline.py` | `run_scan`, `run_verify_only`, `run_report_only`, `run_pipeline`, `diff_findings` | thin wiring over ABCs |
+| `cli.py` | `scan`, `verify-only`, `report-only`, `dyn-verify`, `run`, `diff` | — |
 
 Design rules: verifiers/analyzers/hooks are **read-only** (no writes to targets);
 evidence never contains secret material; live tests gate on
@@ -137,6 +138,22 @@ degradation), `dynamic:crypto-hooks` (ECB/IV-reuse/setSeed/weak-hash) and
 hints for `Dynamic:*` families, live Frida runbook (`docs/frida-live.md`).
 Live `dyn-verify` on fam: 7 static + 2 dynamic verdicts, 9 rendered rows.
 
+### One command, exercise, hooks, verifiers, retest gate
+`autotest run` chains scan → verify-only → dyn-verify → report. `--skip-dynamic`
+stops after the static report. A missing emulator is an inconclusive dynamic
+verdict and the HTML report is still written. Before logcat, `exercise.py`
+starts `exported_activities`, broadcasts to exported receivers (string list
+`exported_receivers`, else manifest findings), and opens `browsable_activities`
+deep links, then taps within `dynamic_dwell`. `run_dynamic` then runs
+`crypto_hooks.js` and `api_map.js` on the pinned serial; missing Frida is
+inconclusive for those two checks only (`--skip-frida` skips them).
+
+New read-only verifiers: `HardcodedSecret` (no network), `GoogleApiKey` (one
+Geocoding GET), `FirebaseStorageUrl`, `FirestoreUrl`, `SlackToken`,
+`GitHubToken`, `StripeSecretKey`, and structural `PemPrivateKey`. Each candidate
+stores `stable_id`. Severity is high / medium / info. `autotest diff` exits 1
+when a new verified row appears. `report-only --format sarif` writes SARIF 2.1.0.
+
 ### Refactor (SOLID pass)
 Split the god-client (`transport`/`static_client`/`dynamic_client`, facade kept
 for compat); `Scanner` ABC + `for_settings()` factory (pipeline no longer
@@ -156,6 +173,8 @@ AUTOTEST_MOBSF_API_KEY=<key> uv run autotest scan <apk> --out-dir ./out
 uv run autotest verify-only ./out/findings.json
 uv run autotest dyn-verify ./out/findings.json --main-activity <pkg/.Main>
 uv run autotest report-only ./out/findings.json
+uv run autotest run <apk> --out-dir ./out
+uv run autotest diff previous.json current.json
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint + the offline `pytest` line on every

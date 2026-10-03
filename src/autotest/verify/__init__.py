@@ -45,7 +45,7 @@ def run_all(candidates: list[Candidate], ctx: Ctx) -> list[Verification]:
     return [verify_candidate(c, ctx) for c in candidates]
 
 
-from . import firebase, misc  # noqa: F401  (register verifiers on import)
+from . import firebase, misc, secrets  # noqa: F401  (register verifiers on import)
 
 __all__ = [
     "REGISTRY",

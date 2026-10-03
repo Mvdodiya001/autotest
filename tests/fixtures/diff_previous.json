@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "apk_path": "app.apk",
+  "apk_sha256": "abababababababababababababababababababababababababababababababab",
+  "mobsf_hash": "",
+  "started_at": "2026-10-02T20:38:06.547895Z",
+  "candidates": [
+    {
+      "id": "cand-001",
+      "secret_type": "RtdbUrl",
+      "value_preview": "https://db.test",
+      "provenance": {
+        "source": "mobsf:secrets",
+        "file": "res/values.xml",
+        "offset": null,
+        "detail": ""
+      },
+      "stable_id": "51f44db5a80bc205e966"
+    }
+  ],
+  "verifications": [
+    {
+      "candidate_id": "cand-001",
+      "verifier": "test",
+      "verdict": "refuted",
+      "evidence": "checked",
+      "checked_at": "2026-10-02T20:38:06.542565Z"
+    }
+  ]
+}

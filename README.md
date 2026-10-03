@@ -11,6 +11,8 @@ uv run autotest scan app.apk --out-dir ./out          # static: MobSF + extracti
 uv run autotest verify-only ./out/findings.json       # live static-verifiers
 uv run autotest dyn-verify ./out/findings.json        # on-device dynamic pass
 uv run autotest report-only ./out/findings.json       # HTML dashboard
+uv run autotest run app.apk --out-dir ./out           # scan → verify → dyn-verify → report
+uv run autotest diff baseline.json ./out/findings.json
 ```
 
 ## How it works
@@ -23,7 +25,12 @@ APK → emulator → MobSF session → probes/hooks → Analyzers → merge ─�
 ```
 
 * **Verdicts:** `verified` (live proof) · `refuted` (provably dead) · `inconclusive`
-  (check errored) · `unverified` (no verifier yet).
+  (check errored) · `unverified` (no verifier yet). Severity follows the verdict:
+  verified is high, inconclusive is medium, refuted and unverified are info.
+* **Retest gate:** each candidate has a `stable_id` (secret type + redacted
+  preview + provenance file). `autotest diff` exits 1 when a new verified row
+  appears. `report-only --format sarif` writes SARIF 2.1.0 instead of HTML
+  (`--format both` writes it beside the HTML).
 * **Safety by design:** verifiers, analyzers and Frida hooks are read-only;
   `findings.json` stores redacted previews only — full values are re-extracted
   from the local `mobsf_report.json` at verify time and never persisted.
@@ -71,16 +78,27 @@ AUTOTEST_MOBSF_API_KEY=<key> uv run pytest -q               # full matrix incl. 
 
 CI (`.github/workflows/ci.yml`) runs lint + offline tests on every push/PR.
 
+## CI gate
+
+An app repo can fail the job when a rescan introduces a verified finding.
+`autotest diff` exits 1 in that case and 0 otherwise. The snippet below is for
+that app repo; it does not replace the lint workflow in this repository.
+
+```yaml
+- run: uv run autotest run app.apk --out-dir ./out --skip-dynamic
+- run: uv run autotest diff baseline/findings.json ./out/findings.json
+```
+
 ## Project layout
 
 ```
 src/autotest/   cli, pipeline, config, models, workdir
   mobsf/        transport + static/dynamic clients, Scanner ABC (api/none)
-  extract/      Extractor ABC + MobSF pass (keys, URLs, Firebase, hardcoded)
-  verify/       Verifier ABC + registry (Firebase, JWT, AWS, URL)
-  dynamic/      emulator env, MobSF session, probes, Frida pack + runner,
+  extract/      Extractor ABC + MobSF pass (keys, URLs, Firebase, tokens, PEM)
+  verify/       Verifier ABC + registry (Firebase, Google, JWT, AWS, URL, tokens)
+  dynamic/      emulator env, MobSF session, exercise pass, probes, Frida runner,
                 analyzers (logcat/exported/cleartext/debuggable/crypto/perm-map), merge
-  report.py     Jinja2 dashboard + replay-command registry
+  report.py     Jinja2 dashboard, replay hints, SARIF 2.1.0
   templates/    report.html (no external assets)
 tests/          unit (mocked HTTP) + live-gated goldens (fam-ctf.apk, DIVA)
 docs/           development-cycle.md (architecture + history), frida-live.md (runbook)
