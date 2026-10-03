@@ -144,15 +144,29 @@ stops after the static report. A missing emulator is an inconclusive dynamic
 verdict and the HTML report is still written. Before logcat, `exercise.py`
 starts `exported_activities`, broadcasts to exported receivers (string list
 `exported_receivers`, else manifest findings), and opens `browsable_activities`
-deep links, then taps within `dynamic_dwell`. `run_dynamic` then runs
-`crypto_hooks.js` and `api_map.js` on the pinned serial; missing Frida is
-inconclusive for those two checks only (`--skip-frida` skips them).
+deep links. The UI pass then taps every clickable node on the current dump,
+at most 8, skips password fields, presses Back, and dumps again. It stops
+when that layout matches the previous dump or `dynamic_dwell` (`--dwell`,
+default 60s) runs out. Dwell 0 performs no taps. `ui.tapped` records a
+resource id, or bounds when there is no id. There is no typed input.
+Hooks cold-start with the app and stay attached through that pass
+(`crypto_hooks.js` and `api_map.js` on the pinned serial); missing Frida is
+inconclusive for those two checks only (`--skip-frida` skips them). Host
+tools are pinned in the dev group: `frida==16.7.19`, `frida-tools==13.7.1`.
 
 New read-only verifiers: `HardcodedSecret` (no network), `GoogleApiKey` (one
 Geocoding GET), `FirebaseStorageUrl`, `FirestoreUrl`, `SlackToken`,
-`GitHubToken`, `StripeSecretKey`, and structural `PemPrivateKey`. Each candidate
-stores `stable_id`. Severity is high / medium / info. `autotest diff` exits 1
-when a new verified row appears. `report-only --format sarif` writes SARIF 2.1.0.
+`GitHubToken`, `StripeSecretKey`, and structural `PemPrivateKey`. A hardcoded
+string that matches one of those shapes is stored as that type. An
+unrecognized string stays inconclusive (`no live probe for this shape`).
+PEM evidence names RSA, EC, or generic PKCS and says there is no live
+acceptor. `merge_dynamic` keeps a static row when a different dynamic
+verifier hits the same candidate id; the same verifier re-run replaces its
+own row. Each candidate stores `stable_id`. Severity is high / medium / info.
+`autotest diff` exits 1 when a new verified row appears.
+`report-only --format sarif` writes SARIF 2.1.0. An offline second app
+profile (`org.example.catalog` in `tests/test_f3_frida.py`) covers exercise
+and hook order without another APK.
 
 ### Refactor (SOLID pass)
 Split the god-client (`transport`/`static_client`/`dynamic_client`, facade kept

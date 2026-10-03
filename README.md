@@ -46,6 +46,17 @@ APK → emulator → MobSF session → probes/hooks → Analyzers → merge ─�
   launch set `ANDROID_SERIAL` from it. `frida_run.run_script` does the same and
   selects the device with `-D` when given that serial. `adb devices` stays
   unpinned.
+* **Exercise:** exported activities, receivers, and browsable deep links, then
+  a UI pass that taps up to 8 clickable nodes per screen and presses Back.
+  It stops when the next dump matches or `--dwell` runs out. No typed input.
+  Password fields are skipped. `ui.tapped` stores a resource id or bounds.
+* **Known shapes:** a hardcoded string that is Slack, GitHub, Stripe, Google,
+  Firebase, an AWS pair, or a JWT is stored as that type. Anything else stays
+  inconclusive (`no live probe for this shape`). A PEM header is structural
+  only: inconclusive, evidence names RSA, EC, or generic PKCS, and there is
+  no live acceptor.
+* **Merge:** a dynamic verifier does not replace a different verifier's row
+  on the same candidate id. The same verifier re-run replaces its own row.
 * **Design:** SOLID throughout — `Scanner`/`Extractor`/`Verifier`/`Analyzer`
   abstractions with registries; see [`docs/development-cycle.md`](docs/development-cycle.md)
   for architecture, build history (M0→M4.3) and the extending cookbook.
@@ -55,7 +66,9 @@ APK → emulator → MobSF session → probes/hooks → Analyzers → merge ─�
 Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/), and a running
 [MobSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF) instance
 (pre-built `mobsf` Docker image works; dynamic runs use `~/mobsf-lab`,
-overridable with `AUTOTEST_LAB_DIR` or `--lab-dir`).
+overridable with `AUTOTEST_LAB_DIR` or `--lab-dir`). The dev group pins
+`frida==16.7.19` and `frida-tools==13.7.1`. Frida 17 dropped the Java bridge
+the hook scripts use. The device `frida-server` must be that same 16.7.19 build.
 
 ```bash
 uv sync --group dev

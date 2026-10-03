@@ -34,7 +34,14 @@ Repository = "https://github.com/Mvdodiya001/autotest"
 Issues = "https://github.com/Mvdodiya001/autotest/issues"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.8", "responses>=0.25"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+    "responses>=0.25",
+    # Frida 17 removed the Java bridge crypto_hooks.js and api_map.js use.
+    "frida==16.7.19",
+    "frida-tools==13.7.1",
+]
 
 [tool.ruff]
 line-length = 100

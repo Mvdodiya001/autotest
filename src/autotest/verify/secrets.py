@@ -15,6 +15,7 @@ from ..extract.mobsf_extract import (
     AWS_ACCESS_KEY_ID,
     GITHUB_TOKEN,
     GOOGLE_API_KEY,
+    JWT_TOKEN,
     NOISE_SECRET,
     PEM_BLOCK,
     SLACK_TOKEN,
@@ -22,12 +23,11 @@ from ..extract.mobsf_extract import (
 )
 from . import Ctx, Verdict, Verification, verifier
 
-_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
 _LABEL = re.compile(r"[A-Za-z][A-Za-z .,;:'\"!?()/_-]{0,160}")
 _KNOWN = (
     (GOOGLE_API_KEY, "GoogleApiKey"),
     (AWS_ACCESS_KEY_ID, "AwsAccessKey"),
-    (_JWT, "Jwt"),
+    (JWT_TOKEN, "Jwt"),
     (SLACK_TOKEN, "SlackToken"),
     (GITHUB_TOKEN, "GitHubToken"),
     (STRIPE_SECRET, "StripeSecretKey"),
@@ -95,7 +95,7 @@ def verify_hardcoded_secret(candidate, ctx: Ctx) -> Verification:
         candidate,
         "verify_hardcoded_secret",
         Verdict.INCONCLUSIVE,
-        "not a recognized live credential; no network probe",
+        "no live probe for this shape",
     )
 
 
@@ -215,6 +215,18 @@ def verify_stripe_key(candidate, ctx: Ctx) -> Verification:
     )
 
 
+def _pem_kind(header: str) -> str:
+    """Name a recognized private-key header. The key is never used."""
+    token = header.strip().upper()
+    if token == "RSA":
+        return "RSA"
+    if token == "EC":
+        return "EC"
+    if not token:
+        return "generic PKCS"
+    return token
+
+
 @verifier("PemPrivateKey")
 def verify_pem_private_key(candidate, ctx: Ctx) -> Verification:
     """Structural parse only. The key is never used to sign or authenticate."""
@@ -227,10 +239,9 @@ def verify_pem_private_key(candidate, ctx: Ctx) -> Verification:
             Verdict.REFUTED,
             "not a recognizable private key",
         )
-    kind = (match.group(1) or "").strip() or "PKCS8"
     return _result(
         candidate,
         "verify_pem_private_key",
         Verdict.INCONCLUSIVE,
-        f"key material present, no live acceptor ({kind})",
+        f"key material present, no live acceptor ({_pem_kind(match.group(1) or '')})",
     )

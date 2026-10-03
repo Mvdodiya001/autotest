@@ -21,6 +21,7 @@ PEM_BLOCK = re.compile(
     r"\s*[A-Za-z0-9+/=\s]+?"
     r"-----END \1PRIVATE KEY-----"
 )
+JWT_TOKEN = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
 _STORAGE_BUCKET = re.compile(
     r"https://firebasestorage\.googleapis\.com/v0/b/([A-Za-z0-9._-]+)", re.IGNORECASE
 )
@@ -63,6 +64,25 @@ def _context_text(obj: Any) -> str:
     if isinstance(obj, list):
         return "\n".join(_context_text(v) for v in obj)
     return ""
+
+
+def _matches_known_credential(text: str) -> bool:
+    """True when this string is a shape the typed extractors already emit.
+
+    Those rows must not also be stored as a vague HardcodedSecret.
+    """
+    if SLACK_TOKEN.search(text) or GITHUB_TOKEN.search(text) or STRIPE_SECRET.search(text):
+        return True
+    if PEM_BLOCK.search(text) or GOOGLE_API_KEY.search(text) or JWT_TOKEN.search(text):
+        return True
+    if _aws_pairs(text):
+        return True
+    return bool(
+        _STORAGE_BUCKET.search(text)
+        or _FIRESTORE_PROJECT.search(text)
+        or _GS_BUCKET.search(text)
+        or _APPSPOT.search(text)
+    )
 
 
 def _plausible_aws_secret(token: str) -> bool:
@@ -212,8 +232,10 @@ def extract_candidates(report: dict[str, Any]) -> list[dict[str, Any]]:
                 add("FirebaseApiKey", key, {"source": "mobsf:secrets"})
             else:
                 add("GoogleApiKey", key, {"source": "mobsf:secrets"})
-        if not NOISE_SECRET.search(text) and re.search(
-            r"(key|secret|token|passwd|pwd)", text, re.IGNORECASE
+        if (
+            not _matches_known_credential(text)
+            and not NOISE_SECRET.search(text)
+            and re.search(r"(key|secret|token|passwd|pwd)", text, re.IGNORECASE)
         ):
             add("HardcodedSecret", text[:300], {"source": "mobsf:secrets"})
         _scan_credential_material(text, {"source": "mobsf:secrets"}, add)
@@ -262,7 +284,7 @@ def _scan_backends(text: str, provenance: dict[str, Any], add) -> None:
 
 
 def _scan_credential_material(text: str, provenance: dict[str, Any], add) -> None:
-    """Slack, GitHub, Stripe, and PEM material. Full values stay in memory only."""
+    """Slack, GitHub, Stripe, PEM, and JWT material. Full values stay in memory only."""
     for token in SLACK_TOKEN.findall(text):
         add("SlackToken", token, provenance)
     for token in GITHUB_TOKEN.findall(text):
@@ -272,6 +294,9 @@ def _scan_credential_material(text: str, provenance: dict[str, Any], add) -> Non
     for match in PEM_BLOCK.finditer(text):
         block = match.group(0).strip()
         add("PemPrivateKey", block, provenance, preview=pem_preview(block))
+    # PEM bodies are base64 and can contain an eyJ substring. Don't treat that as a JWT.
+    for token in JWT_TOKEN.findall(PEM_BLOCK.sub(" ", text)):
+        add("Jwt", token, provenance)
 
 
 def extract_with_ids(report: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:

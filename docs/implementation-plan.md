@@ -41,9 +41,12 @@ MobSF report fields actually used:
   the MobSF browsable set is treated as the VIEW+BROWSABLE set. URIs are opened
   with `am start -a VIEW -c BROWSABLE -d`.
 
-UI: `uiautomator dump`, tap `clickable="true"` centers, then BACK, until
-`dynamic_dwell` (default 60, `--dwell` / `AUTOTEST_DYNAMIC_DWELL`). Dwell 0
-performs no taps. No typed input, no `pm grant`, no extra installs.
+UI: `uiautomator dump`, tap every `clickable="true"` center on that screen
+(at most 8; password fields skipped), then BACK and dump again. Stop when
+the next layout matches or `dynamic_dwell` runs out (default 60,
+`--dwell` / `AUTOTEST_DYNAMIC_DWELL`). Dwell 0 performs no taps.
+`ui.tapped` stores a resource id or bounds, not node text. No typed input,
+no `pm grant`, no extra installs.
 
 Results are stored on the dynamic report as `exported`, `deeplinks`, and `ui`.
 Activity launches still feed `autotest.probes.exported` so the existing
@@ -58,11 +61,13 @@ Test: fake adb output. Live: `dyn-verify` on fam-ctf when the emulator is up.
 
 ## F3 — Frida inside dyn-verify
 
-After the F2 pass, `run_dynamic` runs `crypto_hooks.js` and `api_map.js` via
-`frida_run.run_script` on the pinned serial for the same dwell. Hits stay on
+`run_dynamic` cold-starts the package with `crypto_hooks.js` and `api_map.js`
+already loaded and keeps them attached through the exercise. Hits stay on
 `autotest.hooks` and the existing crypto / permission analyzers emit `dyn:`
 ids. `FridaUnavailable` adds inconclusive verdicts for those two checks only.
-`--skip-frida` skips hook collection and does not add those verdicts.
+`--skip-frida` skips hook collection and does not add those verdicts. The dev
+group pins `frida==16.7.19` and `frida-tools==13.7.1`. An offline second app
+profile (`org.example.catalog`) covers exercise and hook order.
 
 Files: `dynamic/run.py`, `cli.py`, `pipeline.py`, `tests/test_f3_frida.py`,
 `docs/frida-live.md`.
@@ -93,9 +98,12 @@ Previews only; full values stay in memory and are dropped before
 - F4.5 One read-only GET each: Slack `auth.test`, GitHub `/user`, Stripe
   `/v1/account`. 401/403 (and Slack `ok: false`) → refuted. 200 → verified.
   Network error → inconclusive. Response bodies are not stored. PEM is a
-  structural parse only: recognizable header → inconclusive ("key material
-  present, no live acceptor"); garbage → refuted. The key is never used to
-  sign or authenticate.
+  structural parse only: recognizable header → inconclusive, evidence names
+  RSA, EC, or generic PKCS and says there is no live acceptor; garbage →
+  refuted. The key is never used to sign or authenticate. A hardcoded string
+  that matches Slack, GitHub, Stripe, Google, Firebase, an AWS pair, or a
+  JWT is stored as that type. An unrecognized string stays inconclusive
+  (`no live probe for this shape`).
 - F4.6 Replay hints for each new type. HTML test rejects a rendered full secret.
 
 Files: `extract/mobsf_extract.py`, `verify/firebase.py`, `verify/secrets.py`,

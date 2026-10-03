@@ -123,7 +123,7 @@ def test_hardcoded_matrix():
     assert _AIza not in owned.evidence
     vague = verify_candidate(_cand("d", "HardcodedSecret"), _ctx(d="s3cr3tTokVALUE99"))
     assert vague.verdict == Verdict.INCONCLUSIVE
-    assert "no network probe" in vague.evidence
+    assert vague.evidence == "no live probe for this shape"
 
 
 @responses.activate
@@ -237,6 +237,60 @@ def test_token_network_error(monkeypatch):
     down = verify_candidate(_cand("g", "GitHubToken"), _ctx(g=_GITHUB))
     assert down.verdict == Verdict.INCONCLUSIVE
     assert _GITHUB not in down.evidence
+
+
+def test_unrecognized_string_is_inconclusive_and_slack_is_typed():
+    opaque = "api_token=s3cr3tTokVALUE99"
+    vague = verify_candidate(_cand("d", "HardcodedSecret"), _ctx(d=opaque))
+    assert vague.verdict == Verdict.INCONCLUSIVE
+    assert vague.evidence == "no live probe for this shape"
+    assert opaque not in vague.evidence
+
+    slack = _slack_detector_sample()
+    jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1In0.sig"
+    found = extract_candidates(
+        _report(secrets=[slack, f"session token {jwt}", opaque, f"firebase api key {_AIza}"])
+    )
+    by_value = {c["value"]: c["secret_type"] for c in found}
+    assert by_value[slack] == "SlackToken"
+    assert by_value[jwt] == "Jwt"
+    assert by_value[_AIza] == "FirebaseApiKey"
+    assert by_value[opaque] == "HardcodedSecret"
+    hardcoded_values = [c["value"] for c in found if c["secret_type"] == "HardcodedSecret"]
+    assert hardcoded_values == [opaque]
+
+
+def _pem(header: str) -> str:
+    return f"-----BEGIN {header}-----\n{_PEM_BODY}\n-----END {header}-----"
+
+
+def test_pem_rsa_header_versus_garbage():
+    rsa = _pem("RSA PRIVATE KEY")
+    ec = _pem("EC PRIVATE KEY")
+    pkcs = _pem("PRIVATE KEY")
+    live = verify_candidate(_cand("p", "PemPrivateKey"), _ctx(p=rsa))
+    assert live.verdict == Verdict.INCONCLUSIVE
+    assert live.evidence == "key material present, no live acceptor (RSA)"
+    assert _PEM_BODY not in live.evidence
+    ec_row = verify_candidate(_cand("e", "PemPrivateKey"), _ctx(e=ec))
+    assert ec_row.verdict == Verdict.INCONCLUSIVE
+    assert ec_row.evidence == "key material present, no live acceptor (EC)"
+    pkcs_row = verify_candidate(_cand("k", "PemPrivateKey"), _ctx(k=pkcs))
+    assert pkcs_row.verdict == Verdict.INCONCLUSIVE
+    assert pkcs_row.evidence == "key material present, no live acceptor (generic PKCS)"
+    garbage = verify_candidate(_cand("g", "PemPrivateKey"), _ctx(g="not a key at all"))
+    assert garbage.verdict == Verdict.REFUTED
+    broken = verify_candidate(
+        _cand("b", "PemPrivateKey"),
+        _ctx(b="-----BEGIN RSA PRIVATE KEY-----\n!!!\n-----END RSA PRIVATE KEY-----"),
+    )
+    assert broken.verdict == Verdict.REFUTED
+    found = extract_candidates(_report(secrets=[rsa, ec, pkcs]))
+    previews = {c["value"]: c["preview"] for c in found if c["secret_type"] == "PemPrivateKey"}
+    assert previews[rsa] == f"BEGIN RSA PRIVATE KEY (len {len(rsa)})"
+    assert previews[ec] == f"BEGIN EC PRIVATE KEY (len {len(ec)})"
+    assert previews[pkcs] == f"BEGIN PRIVATE KEY (len {len(pkcs)})"
+    assert _PEM_BODY not in "".join(previews.values())
 
 
 def test_pem_structure_only():

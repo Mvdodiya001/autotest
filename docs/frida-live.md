@@ -6,7 +6,9 @@ run you need all three layers. Everything below is read-only against the target.
 ## 1. Host tools
 
 ```bash
-pip install frida-tools          # provides the `frida` CLI
+# Dev group pins frida==16.7.19 and frida-tools==13.7.1 (the `frida` CLI).
+# Frida 17 removed the Java bridge these hook scripts use.
+uv sync --group dev
 frida --version
 ```
 
@@ -19,8 +21,8 @@ source "${AUTOTEST_LAB_DIR:-$HOME/mobsf-lab}/env.sh"
 # ensure_emulator (EmulatorInfo, kept on DynamicSession) and sets ANDROID_SERIAL
 # on later adb calls. Pin the same serial here when more than one device is listed:
 export ANDROID_SERIAL=emulator-5554
-# match the server build to the device arch (x86_64 emulator here) and to your
-# frida-tools major version, e.g. frida-server-16.x-android-x86_64(.xz)
+# match the server build to the device arch (x86_64 emulator here) and to the
+# pinned host tools, e.g. frida-server-16.7.19-android-x86_64(.xz)
 adb push frida-server /data/local/tmp/
 adb shell "chmod 755 /data/local/tmp/frida-server"
 adb shell "su -c '/data/local/tmp/frida-server &'"   # adb root first (see runbook)
@@ -41,9 +43,11 @@ ls src/autotest/dynamic/frida/   # crypto_hooks.js, api_map.js (node --check in 
 `dyn-verify` (and `run`, unless `--skip-dynamic`) cold-starts the package with
 `crypto_hooks.js` and `api_map.js` already loaded, keeps them attached through
 the read-only exercise, and stops when that pass returns. Startup crypto is in
-that window. `--dwell` (default 60s) is the UI pass; there is no second hook
-dwell after it. The serial comes from `ensure_emulator`. The direct `run_script`
-helper still attaches to a process that is already running.
+that window. `--dwell` (default 60s) bounds the UI pass: up to 8 clickable
+taps per screen, then Back, until the next dump matches or the dwell runs
+out. There is no second hook dwell after it, and no typed input. The serial
+comes from `ensure_emulator`. The direct `run_script` helper still attaches
+to a process that is already running.
 
 ```bash
 uv run autotest dyn-verify ./out/findings.json --main-activity com.ctf.fam/.MainActivity

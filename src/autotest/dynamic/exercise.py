@@ -20,6 +20,9 @@ from .probe import parse_am_result
 _BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 _CLASS_IN_PARENS = re.compile(r"\(([A-Za-z0-9_.$]+)\)")
 _UI_DUMP = "/data/local/tmp/autotest-ui.xml"
+# One screen pass taps every clickable node, then Back. The cap keeps a dense
+# screen from turning into a long burst of taps.
+_TAPS_PER_SCREEN = 8
 
 
 def adb_shell(args: list[str], serial: str = "", timeout: int = 30) -> str:
@@ -161,20 +164,54 @@ def deeplink_targets(report: dict[str, Any]) -> list[tuple[str, str]]:
     return targets
 
 
-def clickable_centers(xml_text: str) -> list[tuple[int, int, str]]:
-    """Centers of ``clickable="true"`` nodes. Empty when the dump is not XML."""
+def _hierarchy_root(xml_text: str) -> ET.Element | None:
     start = xml_text.find("<hierarchy")
     if start == -1:
         start = xml_text.find("<node")
     if start == -1:
-        return []
+        return None
     try:
-        root = ET.fromstring(xml_text[start:])
+        return ET.fromstring(xml_text[start:])
     except ET.ParseError:
+        return None
+
+
+def _screen_signature(xml_text: str) -> tuple[tuple[str, str, str, str], ...] | None:
+    """Layout identity. Node text is omitted so secrets on screen are not compared."""
+    root = _hierarchy_root(xml_text)
+    if root is None:
+        return None
+    return tuple(
+        (
+            node.attrib.get("resource-id", ""),
+            node.attrib.get("bounds", ""),
+            node.attrib.get("clickable", ""),
+            node.attrib.get("class", ""),
+        )
+        for node in root.iter("node")
+    )
+
+
+def _tap_label(key: str) -> str:
+    """Resource-id when the node has one, otherwise bounds. Never node text."""
+    bounds, _, resource_id = key.partition("|")
+    return (resource_id or bounds)[:120]
+
+
+def clickable_centers(xml_text: str) -> list[tuple[int, int, str]]:
+    """Centers of ``clickable="true"`` nodes. Empty when the dump is not XML.
+
+    Password fields are skipped so the pass does not focus them. The key is
+    ``bounds|resource-id`` and does not include the node's text.
+    """
+    root = _hierarchy_root(xml_text)
+    if root is None:
         return []
     found: list[tuple[int, int, str]] = []
     for node in root.iter("node"):
         if node.attrib.get("clickable") != "true":
+            continue
+        if node.attrib.get("password") == "true":
             continue
         match = _BOUNDS.fullmatch(node.attrib.get("bounds", ""))
         if not match:
@@ -187,31 +224,58 @@ def clickable_centers(xml_text: str) -> list[tuple[int, int, str]]:
     return found
 
 
+def _dump_ui(serial: str) -> str:
+    dump_out = adb_shell(["uiautomator", "dump", _UI_DUMP], serial=serial, timeout=20)
+    xml = adb_shell(["cat", _UI_DUMP], serial=serial, timeout=20)
+    if "<hierarchy" not in xml and "<node" not in xml:
+        return dump_out
+    return xml
+
+
 def _ui_pass(serial: str, dwell: int, clock) -> dict[str, Any]:
-    ui: dict[str, Any] = {"taps": 0, "dwell_s": dwell, "clickable": 0, "stopped": "dwell"}
+    """Tap each clickable node on a screen (at most 8), press Back, dump the next.
+
+    Stops when the dwell window ends or the next dump has the same layout.
+    Dwell 0 performs no taps. No text entry and no swipes.
+    """
+    ui: dict[str, Any] = {
+        "taps": 0,
+        "dwell_s": dwell,
+        "clickable": 0,
+        "stopped": "dwell",
+        "tapped": [],
+    }
     if dwell <= 0:
         return ui
     deadline = clock() + dwell
-    seen: set[str] = set()
+    previous: tuple[tuple[str, str, str, str], ...] | None = None
     while clock() < deadline:
-        dump_out = adb_shell(["uiautomator", "dump", _UI_DUMP], serial=serial, timeout=20)
-        xml = adb_shell(["cat", _UI_DUMP], serial=serial, timeout=20)
-        if "<hierarchy" not in xml and "<node" not in xml:
-            xml = dump_out
-        nodes = clickable_centers(xml)
-        ui["clickable"] = len(nodes)
-        fresh = [node for node in nodes if node[2] not in seen]
-        if not fresh:
+        xml = _dump_ui(serial)
+        signature = _screen_signature(xml)
+        if signature is None or signature == previous:
             ui["stopped"] = "idle"
             break
-        if clock() >= deadline:
+        previous = signature
+        nodes = clickable_centers(xml)
+        ui["clickable"] = len(nodes)
+        if not nodes:
+            ui["stopped"] = "idle"
+            break
+        timed_out = False
+        tapped_here = False
+        for x, y, key in nodes[:_TAPS_PER_SCREEN]:
+            if clock() >= deadline:
+                timed_out = True
+                break
+            adb_shell(["input", "tap", str(x), str(y)], serial=serial)
+            ui["taps"] += 1
+            ui["tapped"].append(_tap_label(key))
+            tapped_here = True
+        if tapped_here:
+            adb_shell(["input", "keyevent", "4"], serial=serial)
+        if timed_out:
             ui["stopped"] = "cap"
             break
-        x, y, key = fresh[0]
-        seen.add(key)
-        adb_shell(["input", "tap", str(x), str(y)], serial=serial)
-        adb_shell(["input", "keyevent", "4"], serial=serial)
-        ui["taps"] += 1
     else:
         ui["stopped"] = "cap"
     return ui

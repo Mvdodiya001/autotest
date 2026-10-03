@@ -175,6 +175,129 @@ def test_skip_frida_skips_hook_collection_only():
     assert "dynamic:perm-api-map" not in names
 
 
+def test_second_app_profile_exercise_and_hook_order():
+    """Exercise and hook order on a non-fam package, offline, with no emulator."""
+    package = "org.example.catalog"
+    activity = "org.example.catalog.CatalogActivity"
+    link = "org.example.catalog.ItemLink"
+    uri = "catalog://items.example/sku"
+    static = {
+        "package_name": package,
+        "exported_activities": [activity],
+        "exported_receivers": ["org.example.catalog.RefreshReceiver"],
+        "browsable_activities": {
+            link: {
+                "schemes": ["catalog://"],
+                "hosts": ["items.example"],
+                "paths": ["/sku"],
+                "browsable": True,
+            }
+        },
+        "urls": [],
+        "secrets": [],
+        "firebase_urls": [],
+        "code_analysis": {"findings": {}},
+        "permissions": {},
+        "network_security": {},
+        "manifest_analysis": {},
+    }
+    calls: list = []
+
+    def adb(args, serial="", timeout=30):
+        calls.append(list(args))
+        if args[:2] == ["am", "start"] and "-d" in args:
+            return "Starting: Intent { dat=catalog }"
+        if args[:2] == ["am", "start"]:
+            return "Starting: Intent { cmp=catalog }"
+        if args[:2] == ["am", "broadcast"]:
+            return "Broadcast completed: result=0"
+        return ""
+
+    order: list[str] = []
+    original_exercise = dyn_run.exercise.exercise_app
+
+    def starter(pkg, scripts, dwell=60, serial=""):
+        order.append("start")
+        assert pkg == package
+        assert scripts == ("crypto_hooks.js", "api_map.js")
+        assert serial == "emulator-5554"
+        assert dwell == 15
+        return _Hooks([])
+
+    def launch(pkg, act, serial=""):
+        order.append("launch")
+        assert pkg == package
+        assert act == activity
+        assert serial == "emulator-5554"
+        return True
+
+    def exercise_app(*args, **kwargs):
+        order.append("exercise")
+        return original_exercise(*args, **kwargs)
+
+    def pull(*_args, **_kwargs):
+        order.append("logcat")
+        return []
+
+    def wrapped(*args, **kwargs):
+        session = starter(*args, **kwargs)
+        orig = session.finish
+
+        def finish():
+            if "finish" not in order:
+                order.append("finish")
+            return orig()
+
+        session.finish = finish
+        return session
+
+    with (
+        patch.object(dyn_run.exercise, "adb_shell", side_effect=adb),
+        patch.object(dyn_run, "launch_main", side_effect=launch),
+        patch.object(dyn_run.exercise, "exercise_app", side_effect=exercise_app),
+        patch.object(dyn_run, "pull_logcat", side_effect=pull),
+        patch.object(dyn_run.probe, "jdwp_packages", return_value=[]),
+        patch.object(dyn_run.frida_run, "start_hooks", side_effect=wrapped),
+    ):
+        report, verdicts = dyn_run.run_dynamic(
+            _Session(),
+            static,
+            main_activity=activity,
+            dwell=15,
+        )
+
+    assert order == ["start", "launch", "exercise", "finish", "logcat"]
+    assert report["exported"]["activities"] == [
+        {
+            "component": f"{package}/{activity}",
+            "result": "started",
+            "evidence": "Starting: Intent { cmp=catalog }",
+        }
+    ]
+    assert report["exported"]["receivers"] == [
+        {
+            "component": f"{package}/org.example.catalog.RefreshReceiver",
+            "result": "delivered",
+            "evidence": "Broadcast completed: result=0",
+        }
+    ]
+    assert report["deeplinks"] == [
+        {
+            "activity": f"{package}/{link}",
+            "uri": uri,
+            "result": "started",
+            "evidence": "Starting: Intent { dat=catalog }",
+        }
+    ]
+    assert "com.ctf.fam" not in str(report["exported"])
+    assert "com.ctf.fam" not in str(report["deeplinks"])
+    ids = {v.candidate_id for v in verdicts}
+    assert "dyn:deeplink:catalog___items.example_sku" in ids
+    assert "dyn:receiver:org.example.catalog_org.example.catalog.RefreshReceiver" in ids
+    assert any(args[:2] == ["am", "start"] and f"{package}/{activity}" in args for args in calls)
+    assert any(args[:2] == ["am", "start"] and uri in args for args in calls)
+
+
 def test_hook_session_closes_when_exercise_raises():
     closed: list[str] = []
 

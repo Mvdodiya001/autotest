@@ -1,6 +1,8 @@
 """Merge dynamic verdicts into a ScanResult (M4.3).
 
 Static-linked verdicts (cand-NNN) attach to existing candidates.
+A dynamic verifier does not remove a different verifier's row on the same id.
+The same verifier re-run replaces its previous row.
 Orphan `dyn:*` verdicts synthesize a candidate so the report can render them;
 the preview is the (already truncated, secret-free) evidence text.
 """
@@ -41,9 +43,21 @@ def merge_dynamic(result: ScanResult, dyn_verdicts: list[Verification]) -> ScanR
                 )
             )
             known.add(v.candidate_id)
-    fresh = {v.candidate_id: v for v in dyn_verdicts}
-    linked = {c.id for c in result.candidates}
-    result.verifications = [v for v in result.verifications if v.candidate_id not in fresh] + [
-        fresh[cid] for cid in [c.id for c in result.candidates] if cid in fresh and cid in linked
-    ]
+    incoming: dict[tuple[str, str], Verification] = {}
+    for v in dyn_verdicts:
+        incoming[(v.candidate_id, v.verifier)] = v
+    merged: list[Verification] = []
+    replaced: set[tuple[str, str]] = set()
+    for existing in result.verifications:
+        key = (existing.candidate_id, existing.verifier)
+        if key in incoming:
+            if key not in replaced:
+                merged.append(incoming[key])
+                replaced.add(key)
+            continue
+        merged.append(existing)
+    for key, verdict in incoming.items():
+        if key not in replaced:
+            merged.append(verdict)
+    result.verifications = merged
     return result

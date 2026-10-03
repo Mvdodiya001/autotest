@@ -48,6 +48,68 @@ def test_merge_links_and_synthesizes():
     assert len(res.candidates) == 2 and len(res.verifications) == 2
 
 
+def test_merge_keeps_static_verdict_beside_dynamic_hit():
+    res = _result()
+    res.candidates.append(
+        Candidate(
+            id="dyn:exported:keep",
+            secret_type="Dynamic:dynamic:exported-launch",
+            value_preview="launch OK",
+            provenance=Provenance(source="dynamic:exported-launch"),
+        )
+    )
+    res.verifications.append(
+        Verification(
+            candidate_id="cand-001",
+            verifier="verify_url_reachable",
+            verdict=Verdict.REFUTED,
+            evidence="closed",
+        )
+    )
+    res.verifications.append(
+        Verification(
+            candidate_id="dyn:exported:keep",
+            verifier="dynamic:exported-launch",
+            verdict=Verdict.VERIFIED,
+            evidence="launch OK",
+        )
+    )
+    merge_mod.merge_dynamic(
+        res,
+        [
+            Verification(
+                candidate_id="cand-001",
+                verifier="dynamic:cleartext",
+                verdict=Verdict.VERIFIED,
+                evidence="plaintext observed",
+            )
+        ],
+    )
+    by_key = {(v.candidate_id, v.verifier): v for v in res.verifications}
+    assert by_key[("cand-001", "verify_url_reachable")].verdict == Verdict.REFUTED
+    assert by_key[("cand-001", "dynamic:cleartext")].verdict == Verdict.VERIFIED
+    assert by_key[("dyn:exported:keep", "dynamic:exported-launch")].verdict == Verdict.VERIFIED
+    assert [c.id for c in res.candidates] == ["cand-001", "dyn:exported:keep"]
+
+    merge_mod.merge_dynamic(
+        res,
+        [
+            Verification(
+                candidate_id="cand-001",
+                verifier="dynamic:cleartext",
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="rerun",
+            )
+        ],
+    )
+    reruns = [v for v in res.verifications if v.verifier == "dynamic:cleartext"]
+    assert len(reruns) == 1
+    assert reruns[0].verdict == Verdict.INCONCLUSIVE
+    assert reruns[0].evidence == "rerun"
+    assert any(v.verifier == "verify_url_reachable" for v in res.verifications)
+    assert any(v.candidate_id == "dyn:exported:keep" for v in res.verifications)
+
+
 def test_dyn_candidates_render():
     res = _result()
     merge_mod.merge_dynamic(
