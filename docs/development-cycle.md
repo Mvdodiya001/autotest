@@ -47,10 +47,11 @@ Module map (`src/autotest/`):
 | `mobsf/dynamic_client.py` | start/stop/report_json | S: dynamic only |
 | `mobsf_client.py` | legacy combined facade (kept for compat) | — |
 | `scanners.py` | `Scanner` ABC, `ApiScanner`, `NullScanner`, `for_settings()` | D/O: pipeline depends on abstraction |
-| `extract/` | `Extractor` ABC + registry; `MobSFExtractor` (keys, URLs, Firebase, hardcoded refs, noise filter) | O: new sources plug in |
+| `extract/` | `Extractor` ABC + registry; `MobSFExtractor` (keys, URLs, Firebase, tokens, PEM, known-shape promotion, noise filter) | O: new sources plug in |
 | `verify/` | `Verifier` ABC + `FunctionVerifier` adapter + type registry | O/L: functions serve as Verifiers |
-| `verify/firebase.py` | anon-auth key proof, RTDB open-read probe | — |
+| `verify/firebase.py` | anon-auth key proof, RTDB / Storage / Firestore open-read probes | — |
 | `verify/misc.py` | JWT inspection, AWS STS, URL reachability | — |
+| `verify/secrets.py` | Google API key, Slack, GitHub, Stripe, PEM (structural), HardcodedSecret | — |
 | `dynamic/env.py` | emulator bring-up; serial on `EmulatorInfo` (no process-global); `ANDROID_SERIAL` on later adb; install | — |
 | `dynamic/session.py` | setup → collect → teardown; keeps the emulator serial | — |
 | `dynamic/probe.py` | `am start` exported launch, JDWP map | — |
@@ -59,7 +60,7 @@ Module map (`src/autotest/`):
 | `dynamic/frida/*.js` | read-only `crypto_hooks.js`, `api_map.js` (`AUTOTEST_HOOK` JSONL) | — |
 | `dynamic/core.py` | logcat-leak, exported-launch, cleartext, debuggable | — |
 | `dynamic/core2.py` | crypto-hooks (ECB/IV-reuse/setSeed/weak-hash), perm-api-map | — |
-| `dynamic/merge.py` | orphan `dyn:*` verdicts → synthesized `Dynamic:*` candidates | — |
+| `dynamic/merge.py` | orphan `dyn:*` rows; a different verifier on the same id is kept | — |
 | `dynamic/exercise.py` | read-only activity, broadcast, deep-link, and UI pass | — |
 | `dynamic/run.py` | `run_dynamic()` orchestration, including Frida hook collection | — |
 | `report.py` | `ReportRenderer` (template + hint registry) and SARIF 2.1.0 | O: new hint types register |
@@ -71,6 +72,33 @@ evidence never contains secret material; live tests gate on
 `AUTOTEST_MOBSF_API_KEY` and skip cleanly without it.
 
 ## 3. Development cycle (build order)
+
+Completed work is listed first. Each row is in the tree at the commit named
+there. `46e54fb` is the latest of these and may still be local until it is
+pushed.
+
+| Feature | Status | Completed at |
+|---|---|---|
+| M0–M4.3 pipeline (scan, extract, verify, HTML report, dynamic analyzers, Frida scripts, `dyn-verify`) | Done | `5e40bf7` |
+| AWS key/secret pairing, explicit emulator serial, `AUTOTEST_LAB_DIR` | Done | `9625f18` |
+| F1 `autotest run` (scan → verify → dyn-verify → report, `--skip-dynamic`) | Done | `9e499f6` |
+| F2 exercise (exported activities, receivers, deep links, UI pass) | Done | `9e499f6`, widened in `46e54fb` |
+| F3 Frida inside `dyn-verify` | Done | `9e499f6` |
+| F3 hooks cold-start with the app and stay attached through the exercise | Done | `7115589` |
+| F4 read-only verifiers (Google, Storage, Firestore, Slack, GitHub, Stripe, PEM, HardcodedSecret) | Done | `9e499f6` |
+| F4 known-shape classification; PEM evidence names RSA, EC, or generic PKCS | Done | `46e54fb` |
+| F5 `stable_id`, severity, `autotest diff`, SARIF 2.1.0 | Done | `9e499f6` |
+| Slack detector sample split so the file has no token literal | Done | `d79ebd4` |
+| UI pass: up to 8 taps per screen, Back, stop on a repeated dump or dwell | Done | `46e54fb` |
+| Dev-group pin `frida==16.7.19`, `frida-tools==13.7.1` | Done | `46e54fb` |
+| Merge keeps a static row when a different dynamic verifier hits the same id | Done | `46e54fb` |
+| Offline second app profile (`org.example.catalog`) for exercise and hook order | Done | `46e54fb` |
+
+Still open, on purpose: no typed input and no login flow; PEM is never used to
+sign; an unrecognized hardcoded string stays inconclusive; a second real APK
+has not been run on the live dynamic path (the second profile is an offline
+fixture); the emulator GPU and pinned-serial boot fixes live in `~/mobsf-lab`,
+not in this repo.
 
 ### M0 — skeleton
 CLI skeleton (`scan`, `verify-only`, `report-only`), `Settings`, `Workdir`,
