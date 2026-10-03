@@ -1,8 +1,8 @@
-"""Dynamic run orchestration: exercise the app, then collect logcat, probes, and hooks.
+"""Dynamic run orchestration: exercise the app, then collect logcat and probes.
 
-The interaction pass runs before logcat and JDWP. Frida hooks run after that,
-on the same serial and dwell. A missing Frida toolchain is inconclusive for
-the two hook checks only.
+Observe-only Frida hooks are spawned before launch and stay attached through
+the exercise. They stop when that pass returns, so startup crypto is in the
+window. A missing Frida toolchain is inconclusive for the two hook checks only.
 """
 
 from __future__ import annotations
@@ -53,16 +53,7 @@ def _activity_probes(interaction: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _collect_hooks(package: str, serial: str, dwell: int) -> tuple[list[dict[str, Any]], str]:
-    """Observe-only hooks. A missing toolchain stops collection and reports why."""
-    hits: list[dict[str, Any]] = []
-    for script in ("crypto_hooks.js", "api_map.js"):
-        try:
-            for hit in frida_run.run_script(package, script, dwell=dwell, serial=serial):
-                hits.append({"hook": hit.hook, "detail": hit.detail})
-        except frida_run.FridaUnavailable as exc:
-            return hits, str(exc)
-    return hits, ""
+_OBSERVE_SCRIPTS = ("crypto_hooks.js", "api_map.js")
 
 
 def _frida_gaps(verdicts: list[Verification], error: str) -> list[Verification]:
@@ -104,10 +95,25 @@ def run_dynamic(
     package = str(static_report.get("package_name", ""))
     session.setup(lab_dir=lab_dir)
     serial = session.serial
+    hooks: frida_run.HookSession | None = None
+    frida_error = ""
     try:
+        if package and not skip_frida:
+            try:
+                hooks = frida_run.start_hooks(
+                    package, _OBSERVE_SCRIPTS, dwell=dwell, serial=serial
+                )
+            except frida_run.FridaUnavailable as exc:
+                frida_error = str(exc)
         if package and main_activity:
             launch_main(package, main_activity, serial=serial)
         interaction = exercise.exercise_app(static_report, serial=serial, dwell=dwell)
+        hits: list[dict[str, Any]] = []
+        if hooks is not None:
+            found, stop_error = hooks.finish()
+            hits = [{"hook": hit.hook, "detail": hit.detail} for hit in found]
+            if stop_error:
+                frida_error = frida_error or stop_error
         mobsf_report = session.collect()
         report = merge_reports(
             mobsf_report,
@@ -117,9 +123,7 @@ def run_dynamic(
         report["exported"] = interaction["exported"]
         report["deeplinks"] = interaction["deeplinks"]
         report["ui"] = interaction["ui"]
-        frida_error = ""
         if package and not skip_frida:
-            hits, frida_error = _collect_hooks(package, serial, dwell)
             report.setdefault("autotest", {})["hooks"] = hits
             if frida_error:
                 report["autotest"]["frida_error"] = frida_error
@@ -128,4 +132,9 @@ def run_dynamic(
             verdicts = [*verdicts, *_frida_gaps(verdicts, frida_error)]
         return report, verdicts
     finally:
+        if hooks is not None:
+            try:
+                hooks.finish()
+            except Exception:  # noqa: BLE001,S110 - teardown must still run
+                pass
         session.teardown()

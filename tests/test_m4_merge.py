@@ -72,6 +72,29 @@ def test_dyn_replay_hints():
     assert "dyn-verify" in replay_hint("Dynamic:something-new", "x")
 
 
+def test_drop_stale_frida_gaps_keeps_other_rows():
+    res = _result()
+    res.candidates.append(
+        Candidate(
+            id="dyn:crypto:unavailable",
+            secret_type="Dynamic:dynamic:crypto-hooks",
+            value_preview="frida unavailable: frida CLI not installed",
+            provenance=Provenance(source="dynamic:crypto-hooks"),
+        )
+    )
+    res.verifications.append(
+        Verification(
+            candidate_id="dyn:crypto:unavailable",
+            verifier="dynamic:crypto-hooks",
+            verdict=Verdict.INCONCLUSIVE,
+            evidence="frida unavailable: frida CLI not installed",
+        )
+    )
+    merge_mod.drop_stale_frida_gaps(res)
+    assert [c.id for c in res.candidates] == ["cand-001"]
+    assert res.verifications == []
+
+
 def test_dyn_verify_needs_report(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOTEST_SCANNER_BACKEND", "none")
     res = ScanResult(apk_path="a.apk", apk_sha256="0" * 64)

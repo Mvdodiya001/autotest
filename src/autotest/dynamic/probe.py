@@ -57,7 +57,7 @@ def jdwp_packages(serial: str = "") -> list[str]:
     if not pids:
         return []
     try:
-        ps = env_mod._adb("shell ps -A -o PID,NAME", serial=serial, timeout=30)
+        ps = env_mod._adb("shell", "ps -A -o PID,NAME", serial=serial, timeout=30)
     except env_mod.DynamicEnvError:
         return []
     pid_to_name = {}

@@ -195,6 +195,8 @@ def run_dyn_verify(
         dwell=dwell_s,
         skip_frida=skip_frida,
     )
+    if not skip_frida:
+        merge_mod.drop_stale_frida_gaps(result)
     merge_mod.merge_dynamic(result, verdicts)
     result.save(findings)
     return result

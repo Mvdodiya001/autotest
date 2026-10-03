@@ -112,7 +112,12 @@ def diff(previous: str, current: str) -> None:
 @main.command(name="dyn-verify")
 @click.argument("findings", type=click.Path(exists=True, dir_okay=False))
 @click.option("--main-activity", default="", help="Launcher activity (pkg/.Activity suffix ok)")
-@click.option("--dwell", type=int, default=None, help="UI and Frida dwell seconds; 0 skips taps")
+@click.option(
+    "--dwell",
+    type=int,
+    default=None,
+    help="UI dwell seconds; hooks cover launch through this window; 0 skips taps",
+)
 @click.option("--skip-frida", is_flag=True, help="Skip Frida hook collection only")
 @click.pass_obj
 def dyn_verify(
@@ -134,7 +139,12 @@ def dyn_verify(
 @click.option("--out-dir", type=click.Path(), default=None)
 @click.option("--skip-dynamic", is_flag=True, help="Static verify and HTML report only")
 @click.option("--main-activity", default="", help="Launcher activity passed to dyn-verify")
-@click.option("--dwell", type=int, default=None, help="UI and Frida dwell seconds; 0 skips taps")
+@click.option(
+    "--dwell",
+    type=int,
+    default=None,
+    help="UI dwell seconds; hooks cover launch through this window; 0 skips taps",
+)
 @click.option("--skip-frida", is_flag=True, help="Skip Frida hook collection only")
 @click.pass_obj
 def run(

@@ -1,6 +1,8 @@
 """M4.2 tests: hook parsing, runner degradation, crypto + perm-map analyzers."""
 
+import io
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +34,123 @@ def test_runner_degrades_without_frida(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda _: None)
     with pytest.raises(frida_run.FridaUnavailable, match="frida CLI"):
         frida_run.run_script("com.x", "crypto_hooks.js")
+
+
+class _FakeProc:
+    def __init__(self, returncode=None, stderr=""):
+        self.stdout = io.StringIO()
+        self.stderr = io.StringIO(stderr)
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.returncode = -15
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = -15
+        return self.returncode
+
+
+def _patch_spawn(monkeypatch, proc, pidof_answers):
+    answers = list(pidof_answers)
+    seen: dict[str, object] = {"adb": [], "order": []}
+
+    def fake_adb(*args, serial="", timeout=60):
+        seen["adb"].append(args)
+        assert serial == "emulator-5554"
+        if "ps -A" in args:
+            return "frida-server\n"
+        if "force-stop" in args:
+            assert "com.x" in args
+            seen["order"].append("reset")
+            return ""
+        if any(isinstance(arg, str) and arg.startswith("pidof") for arg in args):
+            return answers.pop(0) if answers else ""
+        raise AssertionError(args)
+
+    def fake_popen(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["kwargs"] = kwargs
+        seen["order"].append("spawn")
+        return proc
+
+    monkeypatch.setattr(frida_run.shutil, "which", lambda _name: "/usr/bin/frida")
+    monkeypatch.setattr(frida_run.env_mod, "_adb", fake_adb)
+    monkeypatch.setattr(frida_run.subprocess, "Popen", fake_popen)
+    return seen
+
+
+def test_start_hooks_cold_spawns_both_scripts(monkeypatch):
+    monkeypatch.setattr(frida_run, "PID_READY_S", 0)
+    seen = _patch_spawn(monkeypatch, _FakeProc(), ["", "4321"])
+    session = frida_run.start_hooks(
+        "com.x",
+        ("crypto_hooks.js", "api_map.js"),
+        dwell=15,
+        serial="emulator-5554",
+    )
+    cmd = seen["cmd"]
+    assert cmd[:5] == ["frida", "-D", "emulator-5554", "-f", "com.x"]
+    assert "--pause" not in cmd and "--kill-on-exit" not in cmd
+    assert cmd[cmd.index("-t") + 1] == str(15 + frida_run.HOOK_SLACK_S)
+    loaded = [Path(cmd[i + 1]).name for i, part in enumerate(cmd) if part == "-l"]
+    assert loaded == ["crypto_hooks.js", "api_map.js"]
+    assert seen["order"] == ["reset", "spawn"]
+    log = Path(cmd[cmd.index("-o") + 1])
+    log.write_text(
+        'AUTOTEST_HOOK {"hook":"digest.getInstance","algorithm":"SHA-1"}\n',
+        encoding="utf-8",
+    )
+    hits, err = session.finish()
+    assert err == ""
+    assert [(hit.hook, hit.detail) for hit in hits] == [
+        ("digest.getInstance", {"algorithm": "SHA-1"})
+    ]
+    assert session.finish()[0] == hits
+    assert not log.exists()
+    popped = seen["kwargs"]
+    assert popped["stdin"] is subprocess.DEVNULL
+    assert popped["env"]["PYTHONUNBUFFERED"] == "1"
+
+
+def test_start_hooks_spawn_failure_is_unavailable(monkeypatch):
+    seen = _patch_spawn(
+        monkeypatch, _FakeProc(returncode=1, stderr="Failed to spawn: device offline\n"), [""]
+    )
+    with pytest.raises(frida_run.FridaUnavailable, match="device offline"):
+        frida_run.start_hooks("com.x", ("crypto_hooks.js",), dwell=5, serial="emulator-5554")
+    log = Path(seen["cmd"][seen["cmd"].index("-o") + 1])
+    assert not log.exists()
+
+
+def test_start_hooks_missing_cli_does_not_reset(monkeypatch):
+    monkeypatch.setattr(frida_run.shutil, "which", lambda _name: None)
+
+    def fake_adb(*_args, **_kwargs):
+        raise AssertionError("adb should not run")
+
+    monkeypatch.setattr(frida_run.env_mod, "_adb", fake_adb)
+    with pytest.raises(frida_run.FridaUnavailable, match="frida CLI"):
+        frida_run.start_hooks("com.x", ("crypto_hooks.js",), dwell=1, serial="emulator-5554")
+
+
+def test_start_hooks_missing_server_does_not_reset(monkeypatch):
+    monkeypatch.setattr(frida_run.shutil, "which", lambda _name: "/usr/bin/frida")
+
+    def fake_adb(*args, **_kwargs):
+        assert "force-stop" not in args
+        assert "ps -A" in args
+        return "zygote\n"
+
+    monkeypatch.setattr(frida_run.env_mod, "_adb", fake_adb)
+    with pytest.raises(frida_run.FridaUnavailable, match="frida-server"):
+        frida_run.start_hooks("com.x", ("crypto_hooks.js",), dwell=1, serial="emulator-5554")
 
 
 def test_runner_timeout_returns_partial(monkeypatch):

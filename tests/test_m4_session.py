@@ -126,6 +126,10 @@ def test_run_dynamic_threads_lab_dir_and_serial():
         def teardown(self):
             self.stopped = True
 
+    class _IdleHooks:
+        def finish(self):
+            return [], ""
+
     sess = Sess()
     interaction = {
         "exported": {"activities": [], "receivers": []},
@@ -137,7 +141,7 @@ def test_run_dynamic_threads_lab_dir_and_serial():
         patch.object(dyn_run.probe, "jdwp_packages", return_value=[]) as jdwp,
         patch.object(dyn_run, "launch_main", return_value=True) as launch,
         patch.object(dyn_run.exercise, "exercise_app", return_value=interaction) as exercise,
-        patch.object(dyn_run.frida_run, "run_script", return_value=[]),
+        patch.object(dyn_run.frida_run, "start_hooks", return_value=_IdleHooks()),
     ):
         report, _verdicts = dyn_run.run_dynamic(
             sess,

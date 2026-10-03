@@ -27,3 +27,6 @@ Mobile-Security-Framework-MobSF/
 
 # Local env overrides
 .env
+
+# test files
+*.apk

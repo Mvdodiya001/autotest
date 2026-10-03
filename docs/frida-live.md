@@ -38,9 +38,12 @@ ls src/autotest/dynamic/frida/   # crypto_hooks.js, api_map.js (node --check in 
 
 ## 4. Run through autotest
 
-`dyn-verify` (and `run`, unless `--skip-dynamic`) collects hooks after the
-read-only exercise pass. Both scripts run on the emulator serial from
-`ensure_emulator`, for the same `--dwell` as the UI pass (default 60s):
+`dyn-verify` (and `run`, unless `--skip-dynamic`) cold-starts the package with
+`crypto_hooks.js` and `api_map.js` already loaded, keeps them attached through
+the read-only exercise, and stops when that pass returns. Startup crypto is in
+that window. `--dwell` (default 60s) is the UI pass; there is no second hook
+dwell after it. The serial comes from `ensure_emulator`. The direct `run_script`
+helper still attaches to a process that is already running.
 
 ```bash
 uv run autotest dyn-verify ./out/findings.json --main-activity com.ctf.fam/.MainActivity

@@ -9,6 +9,21 @@ from __future__ import annotations
 
 from ..models import Candidate, Provenance, ScanResult, Verification, stable_finding_id
 
+_STALE_FRIDA_GAPS = {"dyn:crypto:unavailable", "dyn:permapi:unavailable"}
+
+
+def drop_stale_frida_gaps(result: ScanResult) -> None:
+    """Remove a previous toolchain-gap so this pass can replace it.
+
+    A later run that attaches and sees no weak crypto does not re-emit
+    ``dyn:crypto:unavailable``. Leaving the old row would still say the CLI
+    was missing.
+    """
+    result.verifications = [
+        v for v in result.verifications if v.candidate_id not in _STALE_FRIDA_GAPS
+    ]
+    result.candidates = [c for c in result.candidates if c.id not in _STALE_FRIDA_GAPS]
+
 
 def merge_dynamic(result: ScanResult, dyn_verdicts: list[Verification]) -> ScanResult:
     known = {c.id for c in result.candidates}
