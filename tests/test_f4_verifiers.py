@@ -26,7 +26,8 @@ _GEOCODE = "https://maps.googleapis.com/maps/api/geocode/json"
 
 def _slack_detector_sample() -> str:
     """A value the Slack extractor accepts, with no token literal in this file."""
-    return "".join(("xo", "x", "b", "-", "fixture", "token"))
+    # Split so secret scanning does not see a token literal.
+    return "".join(("xo", "x", "b", "-", "fixture", "token"))  # noqa: FLY002
 
 
 def _cand(cid, stype):

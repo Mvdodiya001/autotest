@@ -100,9 +100,7 @@ def run_dynamic(
     try:
         if package and not skip_frida:
             try:
-                hooks = frida_run.start_hooks(
-                    package, _OBSERVE_SCRIPTS, dwell=dwell, serial=serial
-                )
+                hooks = frida_run.start_hooks(package, _OBSERVE_SCRIPTS, dwell=dwell, serial=serial)
             except frida_run.FridaUnavailable as exc:
                 frida_error = str(exc)
         if package and main_activity:

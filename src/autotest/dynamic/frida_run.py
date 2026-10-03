@@ -257,9 +257,7 @@ def run_script(package: str, script: str, dwell: int = 60, serial: str = "") -> 
     else:
         cmd[1:1] = ["-U"]
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=dwell + 30, check=False
-        )
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=dwell + 30, check=False)
     except subprocess.TimeoutExpired as e:
         out = e.stdout if isinstance(e.stdout, str) else ""
         out += e.stderr if isinstance(e.stderr, str) else ""
